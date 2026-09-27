@@ -554,10 +554,15 @@
         var off = Math.abs((PT.freqToMidi(s.f, S.a4) - tg.midi) * 100);
         color = off <= 25 ? '#4ade80' : (off <= 50 ? '#fbbf24' : '#f87171');
       }
-      if (prev && s.t - prev.t < 400) {
+      var broken = !prev || (s.t - prev.t) > 700;
+      if (!broken) {
         ctx.strokeStyle = color;
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(x, y); ctx.stroke();
+      } else {
+        /* 断点/起笔：画个小圆点，让独点也看得见 */
+        ctx.fillStyle = color;
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill();
       }
       prev = { x: x, y: y, t: s.t };
     }
@@ -566,26 +571,30 @@
       ctx.beginPath(); ctx.arc(prev.x, prev.y, 2.6, 0, Math.PI * 2); ctx.fill();
     }
 
-    /* 从本地音频里估出来的主旋律线（实验性参考） */
+    /* 从本地音频里估出来的主旋律线：连续阶梯线（同一音横向、换音竖线），静音处断开 */
     if (S.refTrack && S.refTrack.length) {
       var rShift = S.refShiftOct || 0;
-      ctx.strokeStyle = 'rgba(134,239,172,.6)';
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = 'rgba(134,239,172,.8)';
+      ctx.lineWidth = 2.2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'butt';
       ctx.beginPath();
-      var started = false, prevT2 = -1e9;
+      var started2 = false, prevQ = null, prevY = 0;
       for (var r2 = 0; r2 < S.refTrack.length; r2++) {
         var rp = S.refTrack[r2];
         if (rp.t > dur + 200) break;
-        var rx = X(rp.t), ry = Y(PT.freqToMidi(rp.f, S.a4) + rShift);
-        if (!started || rp.t - prevT2 > 300) { ctx.moveTo(rx, ry); started = true; }
+        if (rp.q === undefined || rp.gap) { started2 = false; prevQ = null; continue; }
+        var rx = X(rp.t), ry = Y(rp.q + rShift);
+        if (!started2) { ctx.moveTo(rx, ry); started2 = true; }
+        else if (rp.q !== prevQ) { ctx.lineTo(rx, prevY); ctx.lineTo(rx, ry); }
         else { ctx.lineTo(rx, ry); }
-        prevT2 = rp.t;
+        prevQ = rp.q; prevY = ry;
       }
       ctx.stroke();
-      ctx.fillStyle = 'rgba(134,239,172,.85)';
+      ctx.fillStyle = 'rgba(134,239,172,.9)';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('灰绿细线 = 从音频估的旋律（参考）', padL + 6, padT + plotH - 12);
+      ctx.fillText('灰绿阶梯线 = 从音频估的旋律（参考）', padL + 6, padT + plotH - 12);
     }
 
     /* 播放头 */
@@ -1072,7 +1081,7 @@
     });
   }
 
-  /** 分块处理，避免卡死页面；返回 [{t(ms), f, conf}] */
+  /** 分块处理，避免卡死页面；返回连续的旋律线 [{t, f, midi, q, conf, rms, gap}] */
   function extractReference(audioBuf, onProgress) {
     return new Promise(function (resolve) {
       var srcRate = audioBuf.sampleRate;
@@ -1087,11 +1096,11 @@
         for (var k = 0; k < chs.length; k++) acc += chs[k][i * ratio];
         mono[i] = acc / chs.length;
       }
-      var win = 768, hop = 768;
+      var win = 1024, hop = 512;                              // 50% 重叠，时间分辨率约 46ms
       var frames = Math.max(1, Math.floor(Math.max(0, len - win) / hop) + 1);
-      var out = [];
+      var raw = [];
       var idx = 0;
-      var CHUNK = 120;
+      var CHUNK = 100;
       function step() {
         var stop = Math.min(frames, idx + CHUNK);
         for (; idx < stop; idx++) {
@@ -1100,62 +1109,117 @@
           var rms = 0;
           for (var j = 0; j < buf.length; j++) rms += buf[j] * buf[j];
           rms = Math.sqrt(rms / buf.length);
-          if (rms < 0.012) continue;                        // 太安静，跳过
+          var t = (off / sr) * 1000;
+          if (rms < 0.010) { raw.push({ t: t, midi: null, f: null, conf: 0, rms: rms }); continue; }
           var r = PT.detectPitch(buf, sr, { minFreq: 70, maxFreq: 1100, threshold: 0.16 });
-          if (r.freq > 0 && r.confidence > 0.6) {
-            out.push({ t: (off / sr) * 1000, f: r.freq, conf: r.confidence });
-          }
+          raw.push({
+            t: t,
+            f: r.freq > 0 ? r.freq : null,
+            midi: (r.freq > 0 && r.confidence > 0.45) ? PT.freqToMidi(r.freq, S.a4) : null,
+            conf: r.confidence || 0,
+            rms: rms
+          });
         }
         if (onProgress) onProgress(idx / frames);
         if (idx < frames) { setTimeout(step, 0); return; }
-        resolve(smoothTrack(out));
+        resolve(viterbiPath(raw));
       }
       step();
     });
   }
 
   /**
-   * 中位数滤波 + 换音过渡剔除
-   *   换音的那一两帧会落在两个音中间（比如 sol→la 出现 sol#），
-   *   这种"既不属于前一个音、也不属于后一个音"的帧必须丢掉，否则会造假音符。
+   * 简化版 Viterbi：把逐帧候选串成一条「连续」的旋律线。
+   *   代价 = 偏离该帧检测到的音高 + 0.4 × 换音跨度
+   *   → 换音过渡帧不会造出假音，偶尔的八度跳变也会被拉回来，
+   *     安静的间奏可以"维持"上一音（代价极小），所以整条线不会断成一段一段。
    */
-  function smoothTrack(track) {
-    if (track.length < 3) return track;
-    var res = [];
-    function cents(a, b) { return Math.abs(1200 * Math.log2(a / b)); }
-    for (var i = 0; i < track.length; i++) {
-      var a = Math.max(0, i - 2), b = Math.min(track.length - 1, i + 2);
-      var fs = [];
-      for (var j = a; j <= b; j++) fs.push(track[j].f);
-      fs.sort(function (x, y) { return x - y; });
-      var med = fs[fs.length >> 1];
-      if (cents(track[i].f, med) > 120) continue;                 // 离中位数太远 → 错音/八度跳变
-      var p1 = track[i - 1] ? track[i - 1].f : track[i].f;
-      var p2 = track[i + 1] ? track[i + 1].f : track[i].f;
-      if (cents(p1, p2) > 150) continue;                          // 前后邻居差太多 → 这是换音过渡帧
-      res.push({ t: track[i].t, f: med, conf: track[i].conf });
+  function viterbiPath(raw) {
+    var voiced = raw.filter(function (r) { return r.midi !== null; });
+    if (voiced.length < 3) return [];
+    var lo = Infinity, hi = -Infinity;
+    voiced.forEach(function (r) { if (r.midi < lo) lo = r.midi; if (r.midi > hi) hi = r.midi; });
+    lo = Math.round(lo) - 3;
+    hi = Math.round(hi) + 3;
+    var N = raw.length, M = hi - lo + 1;
+    if (M > 90) { hi = lo + 90; M = 91; }
+    var INF = 1e9;
+    var prev = new Float64Array(M), cur = new Float64Array(M);
+    var back = new Int16Array(N * M);
+    var i, s, p2;
+    for (s = 0; s < M; s++) { prev[s] = emitCost(raw[0], lo + s); back[s] = -1; }
+    for (i = 1; i < N; i++) {
+      for (s = 0; s < M; s++) {
+        var best = INF, bestP = -1;
+        var pFrom = Math.max(0, s - 14), pTo = Math.min(M - 1, s + 14);
+        for (p2 = pFrom; p2 <= pTo; p2++) {
+          var d = Math.abs(s - p2);
+          var cost = prev[p2] + 0.85 * d + (d > 0 ? 1.1 : 0);   // 换音要付"过路费"，过渡帧不会留下假音
+          if (cost < best) { best = cost; bestP = p2; }
+        }
+        cur[s] = best + emitCost(raw[i], lo + s);
+        back[i * M + s] = bestP;
+      }
+      var tmp = prev; prev = cur; cur = tmp;
     }
-    return res;
+    var sBest = 0;
+    for (s = 1; s < M; s++) if (prev[s] < prev[sBest]) sBest = s;
+    var path = new Int16Array(N);
+    var sCur = sBest;
+    for (i = N - 1; i >= 0; i--) {
+      path[i] = lo + sCur;
+      sCur = back[i * M + sCur];
+      if (sCur < 0) sCur = 0;
+    }
+    return raw.map(function (r, k) {
+      return {
+        t: r.t, f: r.f, midi: r.midi, conf: r.conf, rms: r.rms,
+        q: path[k],
+        gap: (r.midi === null && r.rms < 0.012)
+      };
+    });
   }
 
-  /** 把音高轨迹切成「旋律片段」（同一个半音、持续 ≥180ms） */
+  function emitCost(r, s) {
+    if (r.midi === null) return r.rms < 0.012 ? 0.05 : 0.5;    // 静音：几乎免费地"维持"；有声音但没测准：小惩罚
+    return Math.abs(r.midi - s) - Math.min(0.6, r.conf) * 0.5;
+  }
+
+
+  /** 把连续的旋律线切成「音符片段」（同一个半音、持续 ≥120ms，静音处断开）
+   *  目标音高用片段内「原始检测值的中位数」，比取整更准（不受整条音轨音准微小偏移影响） */
   function buildRefSegs(track) {
     var segs = [], cur = null;
+    function flush() { if (cur) { segs.push(cur); cur = null; } }
     track.forEach(function (p) {
-      var m = Math.round(PT.freqToMidi(p.f, S.a4));
-      if (!cur || cur.midi !== m || (p.t - cur.lastT) > 200) {
-        if (cur) segs.push(cur);
-        cur = { midi: m, startMs: p.t, lastT: p.t, n: 0 };
+      if (p.q === undefined || p.gap) { flush(); return; }
+      if (!cur || cur.midi !== p.q || (p.t - cur.lastT) > 200) {
+        flush();
+        cur = { midi: p.q, startMs: p.t, lastT: p.t, n: 0, raws: [] };
       }
       cur.lastT = p.t;
       cur.n++;
+      if (p.midi !== null) cur.raws.push(p.midi);
     });
-    if (cur) segs.push(cur);
+    flush();
     return segs.filter(function (s) {
-      return (s.lastT - s.startMs) >= 180 && s.n >= 3;
+      return (s.lastT - s.startMs) >= 120 && s.n >= 3 && s.raws.length >= 2;
     }).map(function (s) {
-      return { startMs: s.startMs, endMs: s.lastT, midi: s.midi, n: s.n };
-    });
+      var fine = median(s.raws);
+      return { startMs: s.startMs, endMs: s.lastT, midi: Math.round(fine), midiFine: fine, n: s.n };
+    }).filter(function (s) {
+      return (s.endMs - s.startMs) >= 150;                  // 太短的碎片（换音瞬间）直接丢掉
+    }).reduce(function (acc, s) {
+      /* 相邻且同音高的片段合并 */
+      var last = acc[acc.length - 1];
+      if (last && last.midi === s.midi && (s.startMs - last.endMs) < 220) {
+        last.endMs = s.endMs;
+        last.n += s.n;
+        return acc;
+      }
+      acc.push(s);
+      return acc;
+    }, []);
   }
 
   /** 音分差折叠到 ±600（八度差不算错，男生唱女声歌很常见） */
@@ -1185,7 +1249,7 @@
     S.refShiftOct = refOctShift();
     var rows = [];
     S.refSegs.forEach(function (seg) {
-      var target = seg.midi + S.refShiftOct;
+      var target = (seg.midiFine === undefined ? seg.midi : seg.midiFine) + S.refShiftOct;
       var vals = [];
       for (var i = 0; i < S.samples.length; i++) {
         var s = S.samples[i];
