@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>K歌练习 · 跟唱打分 · 音高线对比</title>
+<meta name="description" content="网页 K 歌练习：显示歌曲的标准音高线和你唱的线，实时打分，录音可导出分析。纯前端，不上传任何声音。" />
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="karaoke.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <h1>🎤 K歌练习 · 跟唱打分</h1>
+    <p class="sub">选歌 → 看到歌的标准音高线 → 跟着唱 → 你的线叠在上面 → 立刻出分并导出分析
+      · <a class="back" href="index.html">← 回到音准检测器</a></p>
+  </div>
+</header>
+
+<main class="wrap grid">
+
+  <!-- ===== 选歌与设置 ===== -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>① 选歌与设置</h2>
+      <span id="rangeBadge" class="muted small"></span>
+    </div>
+
+    <div class="row wrap">
+      <label class="field">选歌 <select id="songSel" class="mini-select wide"></select></label>
+      <button id="demoBtn" class="btn btn-ghost">▶ 先听一遍</button>
+      <button id="startBtn" class="btn btn-primary">🎤 开始跟唱打分</button>
+      <button id="stopBtn" class="btn" disabled>⏹ 停止</button>
+    </div>
+
+    <div class="row wrap">
+      <label class="field">速度
+        <select id="speedSel" class="mini-select">
+          <option value="0.6">0.6x 慢练</option>
+          <option value="0.8">0.8x</option>
+          <option value="1" selected>1.0x 原速</option>
+          <option value="1.15">1.15x</option>
+        </select>
+      </label>
+      <span class="field">移调
+        <button id="trDown" class="btn btn-ghost btn-sm">−</button>
+        <b id="trVal" class="tr-val">0</b>
+        <button id="trUp" class="btn btn-ghost btn-sm">+</button>
+        半音
+      </span>
+      <button id="autoTrBtn" class="btn btn-ghost btn-sm">🎯 自动适配我的音域</button>
+      <label class="field checkbox"><input id="guideChk" type="checkbox" checked /> 播放引导旋律</label>
+      <label class="field checkbox"><input id="metroChk" type="checkbox" checked /> 节拍器</label>
+    </div>
+
+    <p id="songInfo" class="status"></p>
+    <p class="muted small">
+      ⚠️ 用音箱放引导旋律时，麦克风会把引导音也当成"你唱的"。
+      <b>要打分就戴耳机</b>；不戴耳机就把「播放引导旋律」取消、只留节拍器（跟着节拍自己唱）。
+    </p>
+  </section>
+
+  <!-- ===== 音高线对比 ===== -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>② 歌的标准音高线 vs 你唱的线</h2>
+      <span id="playInfo" class="muted small"></span>
+    </div>
+
+    <div class="kara-hud">
+      <div class="hud-item"><span class="k">现在要唱</span><span class="v" id="hudTarget">--</span></div>
+      <div class="hud-item"><span class="k">你唱的是</span><span class="v" id="hudYou">--</span></div>
+      <div class="hud-item"><span class="k">偏差</span><span class="v" id="hudCents">--</span></div>
+      <div class="hud-item"><span class="k">本音实时</span><span class="v" id="hudScore">--</span></div>
+      <div class="hud-item"><span class="k">正在进行</span><span class="v" id="hudProg">--</span></div>
+    </div>
+
+    <canvas id="karaChart" class="kara-chart"></canvas>
+
+    <p class="muted small">
+      <b>灰蓝色阶梯线</b> = 这首歌的标准音高（虚线是休止/换气）；
+      <b>彩色线</b> = 你唱的（绿 = 偏差 25 音分内，黄 = 50 内，红 = 跑调）；
+      <b>竖线</b> = 当前播放位置。浅蓝底色是你设定的音域范围。
+    </p>
+  </section>
+
+  <!-- ===== 成绩 ===== -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>③ 成绩单</h2>
+      <div class="row">
+        <button id="exportBtn" class="btn btn-ghost btn-sm">导出 JSON（给我分析）</button>
+        <button id="csvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
+        <button id="clearBtn" class="btn btn-ghost btn-sm">清空本次</button>
+      </div>
+    </div>
+    <div id="resultSummary" class="summary"></div>
+    <div class="table-scroll">
+      <table class="stat-table">
+        <thead><tr><th>#</th><th>目标音</th><th>你唱到</th><th>偏差</th><th>得分</th><th></th></tr></thead>
+        <tbody id="resultBody"><tr><td colspan="6" class="muted center">还没有成绩，先唱一遍</td></tr></tbody>
+      </table>
+    </div>
+    <p id="resultHint" class="muted small"></p>
+  </section>
+
+  <!-- ===== 自由练习：上传自己的音频 ===== -->
+  <section class="card card--wide">
+    <div class="card-head"><h2>④ 自由练习（上传你自己的音频）</h2></div>
+    <p class="muted small">
+      想练的歌不在上面？把你的 <b>mp3 / m4a / wav</b> 拖进来放，麦克风会记录你的音高线并算出<b>你这段的音高范围</b>，
+      可以导出给我分析。<b>这个模式不评分</b>（因为我拿不到原曲的准确音高线，不知道歌本身的标准音在哪，硬算分就是骗你）。
+      建议戴耳机听，否则麦克风会把音乐一起收进去。
+    </p>
+    <div class="row wrap">
+      <input type="file" id="audioFile" accept="audio/*" class="file-input" />
+      <button id="freeRecBtn" class="btn" disabled>⏺ 开始记录我的音高</button>
+      <span id="audioName" class="muted small">还没有选择音频</span>
+    </div>
+    <div id="freeResult" class="prac-result"></div>
+  </section>
+
+  <!-- ===== 怎么用 ===== -->
+  <section class="card card--wide">
+    <div class="card-head"><h2>怎么练才有效</h2></div>
+    <div class="cols">
+      <div>
+        <h3>一次练习的流程</h3>
+        <ol>
+          <li><b>先听一遍</b>：点「先听一遍」，看灰蓝色阶梯线，心里跟一遍。</li>
+          <li><b>自动适配音域</b>：点「🎯 自动适配我的音域」，把歌移到你能唱的调（会显示移调了几个半音）。</li>
+          <li><b>慢速开唱</b>：速度选 <b>0.6x</b>，戴耳机，点「开始跟唱打分」。</li>
+          <li>唱完看③成绩单：<b>哪个音分最低</b>，就单独回去练那一个音（回主页①用单音测试）。</li>
+          <li>熟练后提速：0.8x → 1.0x。别跳步。</li>
+        </ol>
+      </div>
+      <div>
+        <h3>打分怎么算的</h3>
+        <ul>
+          <li>每个目标音，取你在这段时间里唱的音高<b>中位数</b>（抗抖音、抗个别爆音）。</li>
+          <li>音分偏差 = 你唱的实际音高 − 目标音高（1200 音分 = 1 个八度）。</li>
+          <li>单音得分 = <b>100 − |偏差|×1.2</b>（0 音分 = 100 分，50 音分 = 40 分，83 音分 = 0 分）。</li>
+          <li>没唱到 / 没声音 = 0 分，所以<b>漏唱会直接拉低总分</b>。</li>
+          <li>总分 = 所有目标音得分的平均。</li>
+        </ul>
+        <p class="muted small">导出 JSON 里同时有「目标音高线」和「你的原始音高轨迹」，
+          我可以逐音告诉你：是<b>整体偏高/偏低</b>、<b>某个音程唱不准</b>、还是<b>节奏跟不上</b>。</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>纯前端页面，不联网、不上传任何声音，所有计算都在你的浏览器里完成。</p>
+    <p class="muted small">内置曲目全部是公有领域旋律（儿歌/民谣/古典）+ 自编练习曲，不涉及版权音频。</p>
+  </div>
+</footer>
+
+<script src="js/pitch.js"></script>
+<script src="js/songs.js"></script>
+<script src="js/karaoke.js"></script>
+</body>
+</html>

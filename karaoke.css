@@ -1,0 +1,50 @@
+/* ============================================================
+ * karaoke.css —— K歌练习页专用样式（配合 style.css）
+ * ============================================================ */
+.back { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
+.back:hover { color: #fff; }
+
+.mini-select.wide { min-width: 240px; }
+.tr-val { display: inline-block; min-width: 34px; text-align: center; color: var(--accent-2); font-size: 15px; }
+
+.kara-hud { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.hud-item {
+  background: #0d1425; border: 1px solid var(--line); border-radius: 10px;
+  padding: 7px 11px; display: flex; flex-direction: column; gap: 1px;
+}
+.hud-item .k { font-size: 11.5px; color: var(--muted); }
+.hud-item .v { font-size: 19px; font-weight: 700; color: #dbe6ff; }
+.hud-item .v small { font-size: 12px; font-weight: 500; color: var(--muted); }
+.v-ok { color: var(--ok) !important; }
+.v-warn { color: var(--warn) !important; }
+.v-bad { color: var(--bad) !important; }
+
+.kara-chart {
+  width: 100%; height: 320px; display: block;
+  border-radius: 12px; background: #0c1322; border: 1px solid var(--line);
+}
+
+/* 成绩单 */
+.score-big { font-size: 34px; font-weight: 800; }
+.score-big.s1 { color: var(--ok); }
+.score-big.s2 { color: var(--warn); }
+.score-big.s3 { color: var(--bad); }
+
+.note-pill {
+  display: inline-block; min-width: 30px; text-align: center;
+  background: #16223d; border: 1px solid var(--line); border-radius: 6px;
+  padding: 0 6px; font-weight: 700;
+}
+.score-bar { display: inline-block; vertical-align: middle; width: 72px; height: 9px; border-radius: 999px; background: #223154; overflow: hidden; position: relative; }
+.score-bar i { position: absolute; top: 0; bottom: 0; left: 0; }
+
+.file-input {
+  background: #0d1425; border: 1px solid var(--line); color: var(--muted);
+  border-radius: 8px; padding: 6px 10px; font-size: 13px; max-width: 320px;
+}
+.audio-player { width: 100%; margin-top: 10px; }
+
+@media (max-width: 860px) {
+  .kara-chart { height: 240px; }
+  .mini-select.wide { min-width: 160px; }
+}
