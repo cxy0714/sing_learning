@@ -48,3 +48,6 @@
   .kara-chart { height: 240px; }
   .mini-select.wide { min-width: 160px; }
 }
+#refProgress { min-height: 20px; color: var(--accent); }
+#refProgress .ref-ok { color: var(--ok); }
+#refProgress .ref-bad { color: var(--bad); }

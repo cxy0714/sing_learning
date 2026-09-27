@@ -52,7 +52,8 @@
     /* 结果 */
     result: null,
     /* 自由练习 */
-    freeRec: false, audioEl: null, audioUrl: null
+    freeRec: false, audioEl: null, audioUrl: null,
+    refTrack: null, refSegs: null, refShiftOct: 0
   };
 
   /* ============================================================
@@ -355,7 +356,18 @@
         else { stopAudio(); S.songPos = S.totalMs; setStatus('播放完了，点「🎤 开始跟唱打分」换你来唱。'); }
       }
     } else if (S.freeRec) {
-      S.songPos = now - S.t0Perf;
+      if (S.audioEl && !S.audioEl.paused) {
+        var aMs = S.audioEl.currentTime * 1000;
+        var pMs = now - S.t0Perf;
+        if (Math.abs(aMs - pMs) > 100) S.t0Perf = now - aMs;   // 和音频播放位置重新对齐
+        S.songPos = aMs;
+        if (S.refTrack && S.refTrack.length && S.samples.length > 40 && now - (S._lastShiftAt || 0) > 1500) {
+          S._lastShiftAt = now;
+          S.refShiftOct = refOctShift();                        // 随时把参考线挪到你的八度
+        }
+      } else {
+        S.songPos = now - S.t0Perf;
+      }
     }
     drawKara();
     updateHUD();
@@ -462,6 +474,13 @@
       if (m < lo) lo = m;
       if (m > hi) hi = m;
     });
+    if (S.refTrack && S.refTrack.length) {
+      S.refTrack.forEach(function (p) {
+        var m = PT.freqToMidi(p.f, S.a4) + (S.refShiftOct || 0);
+        if (m < lo) lo = m;
+        if (m > hi) hi = m;
+      });
+    }
     if (!isFinite(lo)) { lo = 60; hi = 72; }
     lo = Math.floor(lo) - 1; hi = Math.ceil(hi) + 1;
     if (isFinite(S.rangeLow) && S.rangeLow - 1 < lo) lo = S.rangeLow - 1;
@@ -469,6 +488,7 @@
     if (hi - lo < 8) { var c = (lo + hi) / 2; lo = c - 4; hi = c + 4; }
 
     var lastT = hasSamples ? S.samples[S.samples.length - 1].t : 0;
+    if (S.refTrack && S.refTrack.length) lastT = Math.max(lastT, S.refTrack[S.refTrack.length - 1].t);
     var dur = Math.max(800, S.totalMs, lastT);
     function X(t) { return padL + clamp(t / dur, 0, 1) * plotW; }
     function Y(m) { return padT + (hi - m) / (hi - lo) * plotH; }
@@ -542,6 +562,28 @@
     if (prev) {
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(prev.x, prev.y, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+
+    /* 从本地音频里估出来的主旋律线（实验性参考） */
+    if (S.refTrack && S.refTrack.length) {
+      var rShift = S.refShiftOct || 0;
+      ctx.strokeStyle = 'rgba(134,239,172,.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      var started = false, prevT2 = -1e9;
+      for (var r2 = 0; r2 < S.refTrack.length; r2++) {
+        var rp = S.refTrack[r2];
+        if (rp.t > dur + 200) break;
+        var rx = X(rp.t), ry = Y(PT.freqToMidi(rp.f, S.a4) + rShift);
+        if (!started || rp.t - prevT2 > 300) { ctx.moveTo(rx, ry); started = true; }
+        else { ctx.lineTo(rx, ry); }
+        prevT2 = rp.t;
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(134,239,172,.85)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillText('灰绿细线 = 从音频估的旋律（参考）', padL + 6, padT + plotH - 12);
     }
 
     /* 播放头 */
@@ -815,7 +857,14 @@
     S.audioEl.src = S.audioUrl;
     $('audioName').textContent = f.name + '（' + (f.size / 1048576).toFixed(1) + ' MB）';
     $('freeRecBtn').disabled = false;
-    $('freeResult').innerHTML = '音频已载入。戴耳机听，然后点「⏺ 开始记录我的音高」。';
+    $('freeResult').innerHTML = '音频已载入。正在后台估计这首歌的旋律线…';
+    if (!S.audioEl._vpmHooked) {
+      S.audioEl._vpmHooked = true;
+      S.audioEl.addEventListener('ended', function () {
+        if (S.freeRec) stopFreeRec(true);
+      });
+    }
+    extractFromFile(f);
   }
 
   function toggleFreeRec() {
@@ -829,36 +878,16 @@
         S.t0Perf = performance.now();
         $('freeRecBtn').textContent = '⏹ 停止记录';
         $('freeRecBtn').classList.add('recording');
-        $('freeResult').innerHTML = '⏺ 正在记录你的音高…唱吧！';
+        $('freeResult').innerHTML = '⏺ 正在记录你的音高…唱吧！（这个模式不评分）';
         setStatus('自由练习：正在记录你的音高（不评分）。');
       }).catch(function (e) {
         $('freeResult').textContent = '拿不到麦克风：' + (e && e.message ? e.message : e);
       });
     } else {
-      S.freeRec = false;
-      $('freeRecBtn').textContent = '⏺ 开始记录我的音高';
-      $('freeRecBtn').classList.remove('recording');
-      freeSummary();
-      drawKara();
+      stopFreeRec(false);
     }
   }
 
-  function freeSummary() {
-    if (!S.samples.length) { $('freeResult').textContent = '没有记录到声音，靠近麦克风再试一次。'; return; }
-    var mids = S.samples.map(function (s) { return PT.freqToMidi(s.f, S.a4); }).sort(function (a, b) { return a - b; });
-    var lo = mids[Math.floor(mids.length * 0.05)], hi = mids[Math.floor(mids.length * 0.95)];
-    var loN = PT.describeMidi(lo, S.a4, false), hiN = PT.describeMidi(hi, S.a4, false);
-    var secs = (S.samples[S.samples.length - 1].t / 1000).toFixed(1);
-    var outLow = lo < S.rangeLow, outHigh = hi > S.rangeHigh;
-    $('freeResult').innerHTML =
-      '这段你唱了 <b>' + secs + ' 秒</b>，音高范围 <b>' + loN.solfege + loN.octave + '</b>（' + num(PT.midiToFreq(lo, S.a4), 1) + ' Hz） ~ <b>' +
-      hiN.solfege + hiN.octave + '</b>（' + num(PT.midiToFreq(hi, S.a4), 1) + ' Hz），跨度 ' + (hi - lo).toFixed(1) + ' 个半音。' +
-      (outHigh ? '<br>⚠️ 最高音超出了你设的音域上限 ' + PT.midiToName(S.rangeHigh) + ' —— 这首歌的原调你顶着唱，建议<b>降 ' +
-        Math.ceil(hi - S.rangeHigh) + ' 个半音</b>。' : '') +
-      (outLow ? '<br>⚠️ 最低音低于你音域下限 ' + PT.midiToName(S.rangeLow) + '。' : '') +
-      '<br>把上面的音频和这份数据一起发给我，我可以帮你看这首歌哪一段把你自己顶住了。';
-    setStatus('自由练习记录完成（不评分，只测你自己的音高范围）。');
-  }
 
   /* ============================================================
    * 事件绑定
@@ -898,6 +927,7 @@
     });
     $('audioFile').addEventListener('change', onFilePicked);
     $('freeRecBtn').addEventListener('click', toggleFreeRec);
+    $('syncRecBtn').addEventListener('click', syncSing);
   }
 
   function changeTranspose(d) {
@@ -936,6 +966,269 @@
     drawKara();
     updateHUD();
     if (S.playing) requestAnimationFrame(visualLoop);
+  }
+
+
+/* ============================================================
+   * 从本地音频里估「主旋律音高线」（实验性）
+   *   用你自己的音频做评分基准 —— 伴奏/鼓/和声都会干扰，人声突出的歌更准
+   * ============================================================ */
+  function decodeFile(file) {
+    if (!file.arrayBuffer) return Promise.reject(new Error('浏览器太旧，读不了本地文件'));
+    return file.arrayBuffer().then(function (buf) {
+      var ctx = ensureCtx();
+      return new Promise(function (resolve, reject) {
+        var done = false;
+        var ok = function (b) { if (!done) { done = true; resolve(b); } };
+        var bad = function (e) { if (!done) { done = true; reject(e || new Error('解码失败')); } };
+        try {
+          var ret = ctx.decodeAudioData(buf, ok, bad);
+          if (ret && ret.then) ret.then(ok, bad);
+        } catch (e) { bad(e); }
+      });
+    });
+  }
+
+  /** 分块处理，避免卡死页面；返回 [{t(ms), f, conf}] */
+  function extractReference(audioBuf, onProgress) {
+    return new Promise(function (resolve) {
+      var srcRate = audioBuf.sampleRate;
+      var ratio = Math.max(1, Math.round(srcRate / 11025));   // 降到约 11kHz，够测人声
+      var sr = srcRate / ratio;
+      var len = Math.floor(audioBuf.length / ratio);
+      var chs = [];
+      for (var c = 0; c < audioBuf.numberOfChannels; c++) chs.push(audioBuf.getChannelData(c));
+      var mono = new Float32Array(len);
+      for (var i = 0; i < len; i++) {
+        var acc = 0;
+        for (var k = 0; k < chs.length; k++) acc += chs[k][i * ratio];
+        mono[i] = acc / chs.length;
+      }
+      var win = 768, hop = 768;
+      var frames = Math.max(1, Math.floor(Math.max(0, len - win) / hop) + 1);
+      var out = [];
+      var idx = 0;
+      var CHUNK = 120;
+      function step() {
+        var stop = Math.min(frames, idx + CHUNK);
+        for (; idx < stop; idx++) {
+          var off = idx * hop;
+          var buf = mono.subarray(off, Math.min(len, off + win));
+          var rms = 0;
+          for (var j = 0; j < buf.length; j++) rms += buf[j] * buf[j];
+          rms = Math.sqrt(rms / buf.length);
+          if (rms < 0.012) continue;                        // 太安静，跳过
+          var r = PT.detectPitch(buf, sr, { minFreq: 70, maxFreq: 1100, threshold: 0.16 });
+          if (r.freq > 0 && r.confidence > 0.6) {
+            out.push({ t: (off / sr) * 1000, f: r.freq, conf: r.confidence });
+          }
+        }
+        if (onProgress) onProgress(idx / frames);
+        if (idx < frames) { setTimeout(step, 0); return; }
+        resolve(smoothTrack(out));
+      }
+      step();
+    });
+  }
+
+  /**
+   * 中位数滤波 + 换音过渡剔除
+   *   换音的那一两帧会落在两个音中间（比如 sol→la 出现 sol#），
+   *   这种"既不属于前一个音、也不属于后一个音"的帧必须丢掉，否则会造假音符。
+   */
+  function smoothTrack(track) {
+    if (track.length < 3) return track;
+    var res = [];
+    function cents(a, b) { return Math.abs(1200 * Math.log2(a / b)); }
+    for (var i = 0; i < track.length; i++) {
+      var a = Math.max(0, i - 2), b = Math.min(track.length - 1, i + 2);
+      var fs = [];
+      for (var j = a; j <= b; j++) fs.push(track[j].f);
+      fs.sort(function (x, y) { return x - y; });
+      var med = fs[fs.length >> 1];
+      if (cents(track[i].f, med) > 120) continue;                 // 离中位数太远 → 错音/八度跳变
+      var p1 = track[i - 1] ? track[i - 1].f : track[i].f;
+      var p2 = track[i + 1] ? track[i + 1].f : track[i].f;
+      if (cents(p1, p2) > 150) continue;                          // 前后邻居差太多 → 这是换音过渡帧
+      res.push({ t: track[i].t, f: med, conf: track[i].conf });
+    }
+    return res;
+  }
+
+  /** 把音高轨迹切成「旋律片段」（同一个半音、持续 ≥180ms） */
+  function buildRefSegs(track) {
+    var segs = [], cur = null;
+    track.forEach(function (p) {
+      var m = Math.round(PT.freqToMidi(p.f, S.a4));
+      if (!cur || cur.midi !== m || (p.t - cur.lastT) > 200) {
+        if (cur) segs.push(cur);
+        cur = { midi: m, startMs: p.t, lastT: p.t, n: 0 };
+      }
+      cur.lastT = p.t;
+      cur.n++;
+    });
+    if (cur) segs.push(cur);
+    return segs.filter(function (s) {
+      return (s.lastT - s.startMs) >= 180 && s.n >= 3;
+    }).map(function (s) {
+      return { startMs: s.startMs, endMs: s.lastT, midi: s.midi, n: s.n };
+    });
+  }
+
+  /** 音分差折叠到 ±600（八度差不算错，男生唱女声歌很常见） */
+  function foldCents(c) {
+    c = ((c % 1200) + 1200) % 1200;
+    if (c > 600) c -= 1200;
+    return c;
+  }
+
+  /** 你这遍唱的是哪个八度（用来把参考线整体挪到你舒服的八度） */
+  function refOctShift() {
+    if (!S.samples.length || !S.refTrack || !S.refTrack.length) return 0;
+    var diffs = [], idx = 0;
+    for (var i = 0; i < S.samples.length; i++) {
+      var s = S.samples[i];
+      while (idx < S.refTrack.length - 1 && S.refTrack[idx + 1].t < s.t) idx++;
+      var rt = S.refTrack[idx];
+      if (Math.abs(rt.t - s.t) > 90) continue;
+      diffs.push(PT.freqToMidi(s.f, S.a4) - PT.freqToMidi(rt.f, S.a4));
+    }
+    if (diffs.length < 20) return 0;
+    return Math.round(median(diffs) / 12) * 12;
+  }
+
+  /** 用「音频里估出来的旋律线」当标准给这遍打分 */
+  function scoreVsRef() {
+    S.refShiftOct = refOctShift();
+    var rows = [];
+    S.refSegs.forEach(function (seg) {
+      var target = seg.midi + S.refShiftOct;
+      var vals = [];
+      for (var i = 0; i < S.samples.length; i++) {
+        var s = S.samples[i];
+        if (s.t >= seg.startMs + 60 && s.t <= Math.max(seg.startMs + 160, seg.endMs - 40)) {
+          vals.push(PT.freqToMidi(s.f, S.a4));
+        }
+      }
+      var med = vals.length ? median(vals) : null;
+      var cents = med === null ? null : foldCents((med - target) * 100);
+      var ti = PT.describeMidi(target, S.a4, false);
+      rows.push({
+        index: rows.length + 1,
+        name: PT.midiToName(seg.midi),
+        targetSol: ti.solfege + ti.octave,
+        targetMidi: target,
+        startMs: seg.startMs, endMs: seg.endMs,
+        medMidi: med, cents: cents, samples: vals.length,
+        score: cents === null ? 0 : Math.max(0, Math.min(100, Math.round(100 - Math.abs(cents) * 1.2)))
+      });
+    });
+    if (!rows.length) { S.result = null; return null; }
+    var sung = rows.filter(function (r) { return r.cents !== null; });
+    var total = Math.round(mean(rows.map(function (r) { return r.score; })));
+    var worst = null;
+    rows.forEach(function (r) { if (!worst || r.score < worst.score) worst = r; });
+    S.result = {
+      rows: rows, total: total,
+      sungCount: sung.length,
+      coverage: sung.length / rows.length * 100,
+      avgAbs: sung.length ? mean(sung.map(function (r) { return Math.abs(r.cents); })) : 0,
+      bias: sung.length ? mean(sung.map(function (r) { return r.cents; })) : 0,
+      in50: sung.length ? sung.filter(function (r) { return Math.abs(r.cents) <= 50; }).length / sung.length * 100 : 0,
+      worst: worst,
+      refBased: true
+    };
+    return S.result;
+  }
+
+  function extractFromFile(file) {
+    var prog = $('refProgress');
+    prog.textContent = '① 正在解码音频…（大文件要几秒）';
+    S.refTrack = null; S.refSegs = null; S.refShiftOct = 0;
+    $('syncRecBtn').disabled = true;
+    decodeFile(file).then(function (ab) {
+      prog.textContent = '② 音频 ' + (ab.length / ab.sampleRate).toFixed(0) + ' 秒，正在估计主旋律音高线…（别关页面）';
+      return extractReference(ab, function (p) {
+        prog.textContent = '② 正在估计主旋律… ' + (p * 100).toFixed(0) + '%（别关页面）';
+      });
+    }).then(function (track) {
+      S.refTrack = track;
+      S.refSegs = buildRefSegs(track);
+      var secs = track.length ? (track[track.length - 1].t / 1000) : 0;
+      prog.innerHTML = '<span class="ref-ok">✅ 提取完成</span>：' + track.length + ' 个音高点 → ' + S.refSegs.length +
+        ' 个旋律片段（覆盖到 ' + secs.toFixed(0) + ' 秒）。' +
+        (S.refSegs.length < 5
+          ? ' <span class="ref-bad">片段太少：这首歌伴奏太满或人声太弱，提取不准，建议只用「⏺ 只记录我的音高」。</span>'
+          : ' 看看②里那条<b>灰绿色细线</b>像不像这首歌的旋律 —— <b>像才用它打分</b>。');
+      $('syncRecBtn').disabled = false;
+      drawKara();
+    }).catch(function (e) {
+      prog.innerHTML = '<span class="ref-bad">❌ 提取失败：' + (e && e.message ? e.message : e) +
+        '。常见原因：① 网易云下载的 .ncm / .uc! 是加密格式（先转成 mp3/flac）；② 浏览器不支持这个编码。<br>' +
+        '也可以先用「⏺ 只记录我的音高」把我唱的音高录下来导出给我分析。</span>';
+    });
+  }
+
+  /* ---------- 同步跟唱：歌和录音一起开始 ---------- */
+  function syncSing() {
+    if (!S.audioEl) { $('freeResult').textContent = '先选一个本地音频文件。'; return; }
+    if (S.freeRec) { stopFreeRec(true); return; }
+    ensureMic().then(function () {
+      S.samples = [];
+      S.notes = [];
+      S.result = null;
+      S.refShiftOct = 0;
+      renderResult();
+      S.freeRec = true;
+      try { S.audioEl.currentTime = 0; } catch (e) {}
+      S.t0Perf = performance.now();
+      S.songPos = 0;
+      var pr = S.audioEl.play();
+      if (pr && pr.catch) pr.catch(function () {});
+      $('syncRecBtn').textContent = '⏹ 停止并打分';
+      $('syncRecBtn').classList.add('recording');
+      $('freeRecBtn').disabled = true;
+      $('freeResult').innerHTML = '🎤 正在同步跟唱：歌在放，同时记录你的音高。<b>戴耳机！</b>';
+      setStatus('同步跟唱中…唱完会自动出分（基准 = 从音频估出来的旋律线）。');
+    }).catch(function (e) {
+      $('freeResult').textContent = '拿不到麦克风：' + (e && e.message ? e.message : e);
+    });
+  }
+
+  function stopFreeRec(auto) {
+    S.freeRec = false;
+    $('syncRecBtn').textContent = '🎤 从头同步跟唱（自动对齐 · 可打分）';
+    $('syncRecBtn').classList.remove('recording');
+    $('freeRecBtn').disabled = false;
+    $('freeRecBtn').textContent = '⏺ 只记录我的音高';
+    try { if (S.audioEl && !S.audioEl.paused) S.audioEl.pause(); } catch (e) {}
+    if (S.refSegs && S.refSegs.length && S.samples.length) {
+      scoreVsRef();
+      renderResult();
+      S.songPos = S.samples[S.samples.length - 1].t;
+      $('freeResult').innerHTML = '✅ 出分啦，看③「成绩单」。评分基准 = 从音频里估出来的旋律线（' + S.refSegs.length +
+        ' 个片段，已按你的八度对齐 ' + ((S.refShiftOct > 0 ? '+' : '') + S.refShiftOct) + ' 个半音）。<br>' +
+        '⚠️ 如果那条灰绿细线和这首歌的旋律<b>不像</b>，这个分就不算数 —— 用「⏺ 只记录我的音高」+ 导出给我分析。';
+    } else {
+      freeSummary();
+    }
+    drawKara();
+  }
+
+  /** 自由练习（没有参考线时）的总结：只看你自己的音高范围 */
+  function freeSummary() {
+    if (!S.samples.length) { $('freeResult').textContent = '没有记录到声音，靠近麦克风再试一次。'; return; }
+    var mids = S.samples.map(function (s) { return PT.freqToMidi(s.f, S.a4); }).sort(function (a, b) { return a - b; });
+    var lo = mids[Math.floor(mids.length * 0.05)], hi = mids[Math.floor(mids.length * 0.95)];
+    var loN = PT.describeMidi(lo, S.a4, false), hiN = PT.describeMidi(hi, S.a4, false);
+    var secs = (S.samples[S.samples.length - 1].t / 1000).toFixed(1);
+    $('freeResult').innerHTML =
+      '这段你唱了 <b>' + secs + ' 秒</b>，音高范围 <b>' + loN.solfege + loN.octave + '</b>（' + num(PT.midiToFreq(lo, S.a4), 1) +
+      ' Hz） ~ <b>' + hiN.solfege + hiN.octave + '</b>（' + num(PT.midiToFreq(hi, S.a4), 1) + ' Hz）。' +
+      (hi > S.rangeHigh ? '<br>⚠️ 最高音超出你设的音域上限 ' + PT.midiToName(S.rangeHigh) + '，建议降 ' +
+        Math.ceil(hi - S.rangeHigh) + ' 个半音唱。' : '') +
+      '<br>把音频和这份数据一起发我，我帮你看哪一段把你自己顶住了。';
+    setStatus('自由练习记录完成。');
   }
 
   /* 启动 */

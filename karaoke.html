@@ -82,6 +82,7 @@
       <b>灰蓝色阶梯线</b> = 这首歌的标准音高（虚线是休止/换气）；
       <b>彩色线</b> = 你唱的（绿 = 偏差 25 音分内，黄 = 50 内，红 = 跑调）；
       <b>竖线</b> = 当前播放位置。浅蓝底色是你设定的音域范围。
+      在「自由练习」里，还多一条<b>灰绿色细线</b> = 从你上传的音频里估出来的主旋律（会按你的八度自动对齐）。
     </p>
   </section>
 
@@ -109,15 +110,24 @@
   <section class="card card--wide">
     <div class="card-head"><h2>④ 自由练习（上传你自己的音频）</h2></div>
     <p class="muted small">
-      想练的歌不在上面？把你的 <b>mp3 / m4a / wav</b> 拖进来放，麦克风会记录你的音高线并算出<b>你这段的音高范围</b>，
-      可以导出给我分析。<b>这个模式不评分</b>（因为我拿不到原曲的准确音高线，不知道歌本身的标准音在哪，硬算分就是骗你）。
-      建议戴耳机听，否则麦克风会把音乐一起收进去。
+      想练的歌不在上面？把你的本地音乐（<b>mp3 / m4a / wav / flac</b>）选进来。网页会做两件事：
+    </p>
+    <ol class="muted small" style="margin-top:-6px">
+      <li><b>从音频里估出主旋律音高线</b>（实验性：伴奏、鼓、和声都会干扰，人声突出的歌比较准）——这条线会画在②里给你看对不对；</li>
+      <li>麦克风记录<b>你唱的音高线</b>，和它叠在一起，<b>就能给任意本地歌曲打分</b>了。</li>
+    </ol>
+    <p class="muted small">
+      ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把歌一起收进去。<br>
+      ⚠️ 网易云下载的 <b>.ncm / .uc!</b> 是加密格式，浏览器解不了，请先用工具转成 mp3/flac。<br>
+      ⚠️ 提取的线只是"估计"，如果它看起来不像这首歌的旋律（比如跟着贝斯跑了），那评分就不准——这时候用下面「只记录我的音高」+ 导出给我分析更靠谱。
     </p>
     <div class="row wrap">
       <input type="file" id="audioFile" accept="audio/*" class="file-input" />
-      <button id="freeRecBtn" class="btn" disabled>⏺ 开始记录我的音高</button>
+      <button id="freeRecBtn" class="btn" disabled>⏺ 只记录我的音高</button>
+      <button id="syncRecBtn" class="btn btn-primary" disabled>🎤 从头同步跟唱（自动对齐 · 可打分）</button>
       <span id="audioName" class="muted small">还没有选择音频</span>
     </div>
+    <div id="refProgress" class="muted small"></div>
     <div id="freeResult" class="prac-result"></div>
   </section>
 
