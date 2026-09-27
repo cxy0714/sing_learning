@@ -122,12 +122,17 @@
       ⚠️ 提取的线只是"估计"，如果它看起来不像这首歌的旋律（比如跟着贝斯跑了），那评分就不准——这时候用下面「只记录我的音高」+ 导出给我分析更靠谱。
     </p>
     <div class="row wrap">
-      <input type="file" id="audioFile" accept="audio/*" class="file-input" />
+      <input type="file" id="audioFile" accept="audio/*,.lrc" multiple class="file-input" />
+      <span class="muted small">可以一次把 <b>.mp3 和同名的 .lrc 歌词一起选上</b>（浏览器不能扫硬盘，得你手动选）</span>
+    </div>
+    <div class="row wrap">
       <button id="freeRecBtn" class="btn" disabled>⏺ 只记录我的音高</button>
       <button id="syncRecBtn" class="btn btn-primary" disabled>🎤 从头同步跟唱（自动对齐 · 可打分）</button>
       <span id="audioName" class="muted small">还没有选择音频</span>
+      <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词</label>
     </div>
     <div id="refProgress" class="muted small"></div>
+    <div id="lyrics" class="lyrics"></div>
     <div id="freeResult" class="prac-result"></div>
   </section>
 

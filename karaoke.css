@@ -51,3 +51,11 @@
 #refProgress { min-height: 20px; color: var(--accent); }
 #refProgress .ref-ok { color: var(--ok); }
 #refProgress .ref-bad { color: var(--bad); }
+/* 歌词 */
+.lyrics {
+  margin-top: 10px; min-height: 0; background: #0c1322; border: 1px solid var(--line);
+  border-radius: 10px; padding: 10px 14px; text-align: center; line-height: 1.9;
+}
+.lyrics:empty { display: none; }
+.ly-line { font-size: 15px; color: #5c6c8d; transition: color .15s; }
+.ly-line.ly-on { font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 0 18px rgba(96,165,250,.45); }

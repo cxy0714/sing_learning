@@ -53,7 +53,8 @@
     result: null,
     /* 自由练习 */
     freeRec: false, audioEl: null, audioUrl: null,
-    refTrack: null, refSegs: null, refShiftOct: 0
+    refTrack: null, refSegs: null, refShiftOct: 0,
+    lrc: null, _lyIdx: -1
   };
 
   /* ============================================================
@@ -365,6 +366,7 @@
           S._lastShiftAt = now;
           S.refShiftOct = refOctShift();                        // 随时把参考线挪到你的八度
         }
+        updateLyrics(S.songPos);
       } else {
         S.songPos = now - S.t0Perf;
       }
@@ -840,9 +842,89 @@
   /* ============================================================
    * 自由练习：上传自己的音频
    * ============================================================ */
+  /** 解析 .lrc 歌词（[mm:ss.xx] 时间标签） */
+  function parseLRC(text) {
+    var out = [];
+    String(text).split(/\r?\n/).forEach(function (line) {
+      var tags = line.match(/\[\d+:\d+(?:\.\d+)?\]/g);
+      if (!tags) return;
+      var body = line.replace(/\[[^\]]*\]/g, '').trim();
+      tags.forEach(function (tag) {
+        var p = tag.match(/\[(\d+):(\d+(?:\.\d+)?)\]/);
+        if (p) out.push({ t: (+p[1]) * 60000 + parseFloat(p[2]) * 1000, text: body });
+      });
+    });
+    out.sort(function (a, b) { return a.t - b.t; });
+    return out.filter(function (l, i) { return l.text || (i > 0 && out[i - 1].text); });
+  }
+
+  function baseName(n) { return String(n).replace(/\.[^.]+$/, ''); }
+
+  /** 读文本：先按 UTF-8 严格解，失败再试 GBK（有些歌词是 GBK） */
+  function readTextSmart(file) {
+    return new Promise(function (resolve) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        var buf = fr.result, txt;
+        try { txt = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+        catch (e1) {
+          try { txt = new TextDecoder('gbk').decode(buf); }
+          catch (e2) { txt = new TextDecoder('utf-8').decode(buf); }
+        }
+        resolve(txt);
+      };
+      fr.onerror = function () { resolve(''); };
+      fr.readAsArrayBuffer(file);
+    });
+  }
+
+  function updateLyrics(t) {
+    var box = $('lyrics');
+    if (!$('lrcChk').checked || !S.lrc || !S.lrc.length) { if (S._lyIdx !== -2) { box.innerHTML = ''; S._lyIdx = -2; } return; }
+    var idx = -1;
+    for (var i = 0; i < S.lrc.length; i++) { if (S.lrc[i].t <= t) idx = i; else break; }
+    if (idx === S._lyIdx) return;
+    S._lyIdx = idx;
+    var from = Math.max(0, idx - 2), to = Math.min(S.lrc.length - 1, idx + 3);
+    var html = '';
+    for (var k = from; k <= to; k++) {
+      html += '<div class="ly-line' + (k === idx ? ' ly-on' : '') + '">' + (S.lrc[k].text || '♪') + '</div>';
+    }
+    box.innerHTML = html;
+  }
+
   function onFilePicked(e) {
-    var f = e.target.files && e.target.files[0];
-    if (!f) return;
+    var list = e.target.files ? Array.prototype.slice.call(e.target.files) : [];
+    var f = null, lrcFile = null, audioList = [];
+    list.forEach(function (x) {
+      if (/\.lrc$/i.test(x.name)) { if (!lrcFile) lrcFile = x; }
+      else if (!f) { f = x; audioList.push(x); }
+      else audioList.push(x);
+    });
+    if (!f) { if (lrcFile) { $('freeResult').textContent = '只选了歌词文件，还要再选一个音频文件（mp3/m4a/wav/flac）。'; } return; }
+    if (!lrcFile && audioList.length > 1) {
+      for (var q = 1; q < audioList.length; q++) {
+        if (/\.lrc$/i.test(audioList[q].name)) { lrcFile = audioList[q]; break; }
+      }
+    }
+    /* 同名 .lrc 优先 */
+    if (!lrcFile) {
+      for (var w = 0; w < list.length; w++) {
+        if (/\.lrc$/i.test(list[w].name) && baseName(list[w].name) === baseName(f.name)) { lrcFile = list[w]; break; }
+      }
+    }
+    if (lrcFile) {
+      readTextSmart(lrcFile).then(function (txt) {
+        S.lrc = parseLRC(txt);
+        S._lyIdx = -1;
+        updateLyrics(-1);
+        $('freeResult').innerHTML = '📄 已配歌词 <b>' + lrcFile.name + '</b>（' + S.lrc.length + ' 行）'
+          + (S.lrc.length ? '' : '：这个文件里没有时间标签，可能是个纯音乐。') + '。';
+      });
+    } else {
+      S.lrc = null; S._lyIdx = -1;
+      $('lyrics').innerHTML = '';
+    }
     if (S.audioUrl) URL.revokeObjectURL(S.audioUrl);
     S.audioUrl = URL.createObjectURL(f);
     if (!S.audioEl) {
@@ -928,6 +1010,7 @@
     $('audioFile').addEventListener('change', onFilePicked);
     $('freeRecBtn').addEventListener('click', toggleFreeRec);
     $('syncRecBtn').addEventListener('click', syncSing);
+    $('lrcChk').addEventListener('change', function () { S._lyIdx = -1; updateLyrics(S.songPos > -9000 ? S.songPos : 0); });
   }
 
   function changeTranspose(d) {
@@ -1189,6 +1272,8 @@
       $('syncRecBtn').classList.add('recording');
       $('freeRecBtn').disabled = true;
       $('freeResult').innerHTML = '🎤 正在同步跟唱：歌在放，同时记录你的音高。<b>戴耳机！</b>';
+      S._lyIdx = -1;
+      updateLyrics(0);
       setStatus('同步跟唱中…唱完会自动出分（基准 = 从音频估出来的旋律线）。');
     }).catch(function (e) {
       $('freeResult').textContent = '拿不到麦克风：' + (e && e.message ? e.message : e);
@@ -1202,6 +1287,7 @@
     $('freeRecBtn').disabled = false;
     $('freeRecBtn').textContent = '⏺ 只记录我的音高';
     try { if (S.audioEl && !S.audioEl.paused) S.audioEl.pause(); } catch (e) {}
+    S._lyIdx = -1;
     if (S.refSegs && S.refSegs.length && S.samples.length) {
       scoreVsRef();
       renderResult();
