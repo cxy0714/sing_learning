@@ -192,6 +192,22 @@
     <div id="sessions" class="sessions"></div>
   </section>
 
+  <!-- ============ 变调助手 ============ -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>⑦ 变调助手（想唱的歌太高怎么办）</h2>
+    </div>
+    <p class="muted small">查一下这首歌的<b>最高音</b>（网上搜「歌名 最高音」一般都有，比如「最高音 A4 / C5」），
+      填进来就知道要降几个半音、降完之后最低音会不会掉出你的音域。</p>
+    <div class="row wrap">
+      <label class="field">歌曲最高音 <select id="songHighSel" class="mini-select"></select></label>
+      <label class="field">歌曲最低音 <select id="songLowSel" class="mini-select"></select></label>
+      <button id="shiftPlayBtn" class="btn btn-sm">▶ 试听移调后的最高音</button>
+    </div>
+    <div id="shiftOut" class="prac-result">先在上面选这首歌的最高音。</div>
+    <p class="muted small">KTV 和伴奏软件里的「降调」按钮，一般按一下 = 1 个半音（有的软件一下 = 2 个半音，注意看说明）。</p>
+  </section>
+
   <!-- ============ 说明 ============ -->
   <section class="card card--wide">
     <div class="card-head"><h2>使用须知 / 怎么练</h2></div>

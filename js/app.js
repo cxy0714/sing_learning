@@ -79,7 +79,9 @@
     buildLadder();
     buildRefTable();
     buildPracticeSelect();
+    buildShiftSelects();
     renderRangeInfo();
+    updateShift();
     drawLive(performance.now());
     loadSessions();
     renderSessions();
@@ -109,6 +111,9 @@
     $('rangeSel').addEventListener('change', function () { onRangePreset(this.value); });
     $('rangeLowSel').addEventListener('change', function () { onCustomRange('low', parseInt(this.value, 10)); });
     $('rangeHighSel').addEventListener('change', function () { onCustomRange('high', parseInt(this.value, 10)); });
+    $('songHighSel').addEventListener('change', updateShift);
+    $('songLowSel').addEventListener('change', updateShift);
+    $('shiftPlayBtn').addEventListener('click', playShiftTone);
     $('liveWin').addEventListener('change', function () { S.liveWin = parseInt(this.value, 10) || 10; saveSettings(); });
     $('scopeChk').addEventListener('change', function () {
       S.scopeOn = this.checked;
@@ -668,8 +673,88 @@
     saveSettings();
     buildLadder(); buildRefTable(); buildPracticeSelect();
     renderRangeInfo();
+    updateShift();
     drawChart(currentChartTrack());
     if (S.current) updateReadout(S.current);
+  }
+
+  /* ============================================================
+   * 变调助手
+   * ============================================================ */
+  function buildShiftSelects() {
+    var hi = $('songHighSel'), lo = $('songLowSel');
+    var prevHi = hi.value, prevLo = lo.value;
+    hi.innerHTML = '';
+    lo.innerHTML = '';
+    var opN = document.createElement('option');
+    opN.value = '';
+    opN.textContent = '不确定 / 无所谓';
+    lo.appendChild(opN);
+    for (var m = 36; m <= 84; m++) {                  // C2 ~ C6
+      var n = PT.describeMidi(m, S.a4, S.useFlat);
+      var label = n.solfege + n.octave + ' · ' + n.letterName + ' · ' + num(n.freq, 1) + ' Hz';
+      var o1 = document.createElement('option');
+      o1.value = m; o1.textContent = label;
+      hi.appendChild(o1);
+      var o2 = document.createElement('option');
+      o2.value = m; o2.textContent = label;
+      lo.appendChild(o2);
+    }
+    hi.value = prevHi || 72;                          // 默认给个典型高音 do5 = C5
+    lo.value = prevLo || '';
+  }
+
+  function updateShift() {
+    var box = $('shiftOut');
+    var high = parseInt($('songHighSel').value, 10);
+    var lowRaw = $('songLowSel').value;
+    var low = (lowRaw === '' || lowRaw === null || lowRaw === undefined) ? null : parseInt(lowRaw, 10);
+    if (!isFinite(high)) { box.innerHTML = '先在上面选这首歌的最高音。'; S.shiftSuggest = 0; return; }
+
+    var rangeHi = S.rangeHigh, rangeLo = S.rangeLow;
+    var need = high - rangeHi;
+    var shift, advice;
+    if (high <= rangeHi - 2) {
+      shift = 0;
+      advice = '✅ <b>原调就能唱</b>：最高音 ' + PT.midiToName(high) + ' 距离你的上限 ' + PT.midiToName(rangeHi) + ' 还有余量。';
+    } else if (high <= rangeHi) {
+      shift = 1;
+      advice = '🟡 <b>原调勉强能唱</b>：最高音 ' + PT.midiToName(high) + ' 一直贴着你的天花板 ' + PT.midiToName(rangeHi) +
+               '，唱到副歌容易累、容易飘。建议<b>降 1~2 个半音</b>更稳。';
+    } else {
+      shift = need + 1;
+      advice = '🔴 <b>原调唱不了</b>：最高音 ' + PT.midiToName(high) + ' 比你的上限 ' + PT.midiToName(rangeHi) +
+               ' 高 <b>' + need + ' 个半音</b>。至少要降 <b>' + need + '</b> 个半音，想稳一点就降 <b>' + shift + '</b> 个半音。';
+    }
+    S.shiftSuggest = shift;
+
+    var out = [advice];
+    if (shift > 0) {
+      var newHi = high - shift;
+      var seg = '移调后最高音 → <b>' + PT.midiToName(newHi) + '</b>（' + num(PT.midiToFreq(newHi, S.a4), 1) + ' Hz）';
+      if (low !== null) seg += '，最低音 → <b>' + PT.midiToName(low - shift) + '</b>（' + num(PT.midiToFreq(low - shift, S.a4), 1) + ' Hz）';
+      out.push(seg + '。');
+    }
+    if (low !== null) {
+      var newLow = low - shift;
+      if (newLow < rangeLo) {
+        out.push('⚠️ 降 ' + shift + ' 个半音后，最低音 ' + PT.midiToName(newLow) + ' 会掉出你的音域下限 ' + PT.midiToName(rangeLo) +
+                 ' —— 这首歌<b>跨度比你的音域还大</b>。别硬唱整首：先只练副歌，低音部分轻轻带过。');
+      } else if ((high - low) > (rangeHi - rangeLo)) {
+        out.push('ℹ️ 这首歌跨度 ' + (high - low) + ' 个半音，比你的音域（' + (rangeHi - rangeLo) + ' 个半音）还宽，唱的时候高音低音别都用全力。');
+      }
+    }
+    box.innerHTML = out.join('<br>');
+  }
+
+  function playShiftTone() {
+    var high = parseInt($('songHighSel').value, 10);
+    if (!isFinite(high)) { setStatus('先在⑦里选一下这首歌的最高音。'); return; }
+    var shift = high > S.rangeHigh ? (high - S.rangeHigh + 1) : 0;
+    var target = high - shift;
+    playTone(PT.midiToFreq(target, S.a4), 1.3, 0.25);
+    setStatus('正在播放移调后的最高音 ' + PT.midiToName(target) + '（' + num(PT.midiToFreq(target, S.a4), 1) +
+              ' Hz）。等这个音你能稳稳落在实时曲线的绿色带里，这首歌降 ' + shift + ' 个半音就能拿下。');
   }
 
   function renderRangeInfo() {
@@ -895,10 +980,17 @@
       if (!best || r.avgAbs < best.avgAbs) best = r;
     });
 
+    /* 本段实际音高范围（取 5%~95% 分位，去掉个别离群点） */
+    var midis = track.map(function (p) { return PT.freqToMidi(p.f, a4); }).sort(function (x, y) { return x - y; });
+    var pLo = midis.length ? midis[Math.floor(midis.length * 0.05)] : 60;
+    var pHi = midis.length ? midis[Math.floor(midis.length * 0.95)] : 60;
+
     return {
       list: list,
       summary: {
         total: track.length,
+        rangeLowMidi: pLo,
+        rangeHighMidi: pHi,
         voicedSeconds: track.length * step / 1000,
         avgBias: mean(centsAll),
         avgAbs: mean(absAll),
@@ -932,6 +1024,7 @@
       { k: '±25 音分内', v: s.in25.toFixed(0) + '%', cls: qualityClass(100 - s.in25) },
       { k: '±50 音分内', v: s.in50.toFixed(0) + '%', cls: qualityClass(100 - s.in50) },
       { k: '最偏的音', v: s.worst ? (s.worst.sol + ' (' + (s.worst.avg >= 0 ? '+' : '') + s.worst.avg.toFixed(0) + ')') : '—', cls: 'bad' },
+      { k: '本段音高范围', v: (s.rangeLowMidi !== undefined ? PT.midiToName(s.rangeLowMidi) + '~' + PT.midiToName(s.rangeHighMidi) : '—'), cls: '' },
       { k: '最准的音', v: s.best ? (s.best.sol + ' (±' + s.best.avgAbs.toFixed(0) + ')') : '—', cls: 'good' }
     ];
     $('summary').innerHTML = cards.map(function (c) {

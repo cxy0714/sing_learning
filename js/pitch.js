@@ -161,9 +161,10 @@
     return (parseInt(m[3], 10) + 1) * 12 + base;
   }
 
-  /** MIDI 音号 -> 'A4' */
+  /** MIDI 音号（可以是小数）-> 'A4' */
   function midiToName(midi) {
-    return LETTERS[noteIndex(midi)] + octaveOf(midi);
+    var m = Math.round(midi);
+    return LETTERS[noteIndex(m)] + octaveOf(m);
   }
 
   global.PitchTool = {
