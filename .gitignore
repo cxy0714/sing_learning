@@ -1,0 +1,28 @@
+# === 只保证一件事：任何数据都不入库 ===
+# 音频（你自己的、转换出来的、分离出来的，一律不许进仓库）
+*.mp3
+*.flac
+*.wav
+*.m4a
+*.aac
+*.ape
+*.ncm
+*.ogg
+*.opus
+*.lrc
+# 录音与导出（练习数据）
+karaoke-*.json
+pitch-*.json
+pitch-*.csv
+*-manifest.json
+tools/vocals/
+# 本地环境（体积巨大，且与本网站无关）
+.demucs-env/
+node_modules/
+__pycache__/
+*.pyc
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

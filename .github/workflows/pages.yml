@@ -1,0 +1,45 @@
+name: Deploy static site to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Pages（首次会自动启用 Pages）
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: 只打包网站需要的文件
+        run: |
+          mkdir -p site/js
+          cp index.html karaoke.html style.css karaoke.css site/
+          cp js/pitch.js js/songs.js js/app.js js/karaoke.js site/js/
+          find site -type f | sort
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

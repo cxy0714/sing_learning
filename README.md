@@ -14,7 +14,9 @@
   音域外的音会自动**变灰**并提示，不会让你硬唱上不去的高音
 - 可以**录音**（只记音高、不存声音），自动统计"每个音平均偏高多少、稳不稳"，并**导出 JSON** 发给我做分析
 
-> 所有计算都在你自己的浏览器里完成，**声音不会上传到任何服务器**。
+> **隐私**：纯前端静态网页 —— 没有后端、没有统计脚本、不加载任何第三方资源。
+> 你的麦克风声音、你选的本地音频，全部**只在浏览器内存里参与计算，不上传任何地方**；
+> 网站作者也拿不到任何数据。选本地文件走的是浏览器文件选择器，只有你主动选的文件会被读取。
 
 ---
 
@@ -132,7 +134,9 @@
 - ⚠️ 提取是**估计**：伴奏、鼓、和声、混响都会干扰。**人声突出 / 清唱 / 编曲简单的歌更准**。
   如果画出来的灰绿细线和这首歌的旋律不像（比如跟着贝斯跑了），那这个分就不算数，
   请改用「⏺ 只记录我的音高」把轨迹导出给我分析。
-- ✅ **`.ncm` 已经能转了**：仓库里的 `tools/ncmdump.js` 可以直接把网易云 `.ncm` 还原成 mp3/flac：
+- ✅ **`.ncm` 已经能转了**：仓库里的 `tools/ncmdump.js` 可以直接把网易云 `.ncm` 还原成 mp3/flac
+  （算法与密钥常量来自 MIT 许可的开源项目 [taurusxin/ncmdump](https://github.com/taurusxin/ncmdump)，
+  许可证副本见 `tools/LICENSE-upstream-ncmdump.txt`；本仓库是其 JavaScript 重写版）：
   ```bash
   node tools/ncmdump.js "C:\CloudMusic\VipSongsDownload" -o "C:\CloudMusic\converted" --manifest
   ```
@@ -150,6 +154,31 @@
 - 单音得分 = `100 − |偏差|×1.2`（0 音分 = 100 分，50 音分 = 40 分，83 音分以上 = 0 分）
 - **漏唱 / 没声音 = 0 分**，所以漏唱会直接拉低总分
 - 总分 = 所有目标音得分的平均
+
+### 让「音高线」真正跟上人声：先做人声分离（推荐）
+
+浏览器里那套 DSP（带通滤波 + 限定人声范围）只能**尽力避开**贝斯和鼓，伴奏一满还是会被带跑
+（实测周华健《难念的经》：不处理时整条线会落在 D#2/E2 ≈ 78Hz 的贝斯上，完全不是人声）。
+
+现在的标准做法是**先把人声分离出来，再提取音高** —— 这也是业界主流流程：
+**UVR**（[ultimatevocalremovergui](https://github.com/Anjok07/ultimatevocalremovergui)，★26k，图形界面）、
+**Demucs**（[facebookresearch/demucs](https://github.com/facebookresearch/demucs)，★10k）、
+**BS-RoFormer/MDX23C**（UVR5/MSST 里更新的模型）、早期还有 **Spleeter**（★28k）。
+
+仓库里给了一个基于 Demucs 的脚本：
+
+```powershell
+# 单首（会输出 难念的经.vocals.mp3 和 难念的经.no_vocals.mp3）
+powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\CloudMusic\周华健 - 难念的经.mp3"
+# 整个目录
+powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\Music" -Out "C:\Music\vocals"
+```
+
+然后在 K歌页 ④ 里选 **`xxx.vocals.mp3`** 当音频 —— 音高线就会干净非常多
+（纯人声时可以把「人声滤波」关掉，「人声范围」按原唱性别选）。
+分离出的 `.no_vocals.mp3` 是伴奏，可以当自己的 K 歌伴奏用。
+
+CPU 上大约 1~3 分钟/首；有 NVIDIA 显卡会快很多。首次运行会自动下载模型（约 80MB）。
 
 **⚠️ 重要**：用音箱放引导旋律时，麦克风会把引导音也当成"你唱的"。
 **要打分就戴耳机**；不戴耳机就取消勾选「播放引导旋律」，只留节拍器跟着唱。
@@ -248,8 +277,11 @@ js/app.js        音准检测页逻辑
 js/songs.js      K歌曲库（公有领域旋律，音符序列）
 js/karaoke.js    K歌页逻辑：时间轴、移调、合成播放、打分、导出
 serve.js         本地预览服务器（node serve.js → http://localhost:8000）
-tools/ncmdump.js .ncm → mp3/flac 转换工具（对齐 taurusxin/ncmdump 的算法，实测 1077/1077 成功）
-test/selftest.js 离线回归测试（node test/selftest.js，36 项：算法 / 曲库 / 提取打分 / 歌词 / 统计）
+tools/ncmdump.js          .ncm → mp3/flac 转换工具（JavaScript 重写自 MIT 项目 taurusxin/ncmdump）
+tools/separate-vocals.ps1 Demucs 人声分离（去掉伴奏再提音高，解决"跟着贝斯跑"）
+tools/LICENSE-upstream-ncmdump.txt  上游项目许可证
+test/selftest.js          离线回归测试（node test/selftest.js，36 项）
+.github/workflows/pages.yml   GitHub Pages 自动部署
 README.md        本文件
 ```
 
@@ -271,6 +303,9 @@ README.md        本文件
   手机端也能用（iOS Safari 需要 https）。
 
 ## 八、小提醒
+
+- **仓库里不要提交任何音频**：`.gitignore` 已经挡掉 `*.mp3 / *.flac / *.wav / *.ncm / *.lrc / karaoke-*.json` 等。
+  网站本身不需要任何音频文件，练歌时用浏览器本地选择即可。
 
 - 唱的时候**别用抖音**，音高抖得厉害检测会跳来跳去。
 - 环境和麦克风距离影响很大：安静房间 + 麦克风离嘴 15~25cm 最准。

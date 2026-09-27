@@ -19,6 +19,14 @@
  *   例：
  *     node tools/ncmdump.js "C:\CloudMusic\VipSongsDownload" -o "C:\CloudMusic\converted"
  *
+ *   ── 出处与许可 ─────────────────────────────────────────────
+ *   本文件的算法与密钥常量来自 MIT 许可的开源项目：
+ *     taurusxin/ncmdump  ·  https://github.com/taurusxin/ncmdump
+ *     Copyright (c) 2024 taurusxin  ·  MIT License（见同目录 LICENSE-upstream-ncmdump.txt）
+ *   这里是 JavaScript 重写版（不是复制粘贴），用途只有一个：
+ *   把使用者**自己本机**的 .ncm 文件还原成通用 mp3/flac，方便自己练歌。
+ *   请勿用于传播、分发他人作品。
+ *   ─────────────────────────────────────────────────────────
  *   ⚠️ 仅供转换你自己的本地文件、自己练歌用，别拿去传播。
  * ============================================================ */
 'use strict';
@@ -141,10 +149,16 @@ function convert(inPath, outDir, opts) {
   }
 
   if (!opts.dry) {
+    if (opts.skipExisting) {
+      for (const ext of ['mp3', 'flac']) {
+        const ex = path.join(outDir, outName + '.' + ext);
+        if (fs.existsSync(ex)) return { inPath, outPath: ex, fmt, size, meta, audioStart, rc4keyLen, check, ok: true, skipped: true };
+      }
+    }
     fs.mkdirSync(outDir, { recursive: true });
     fs.writeFileSync(outPath, audio);
   }
-  return { inPath, outPath: opts.dry ? null : outPath, fmt, size, meta, audioStart, rc4keyLen, check, ok: !!snapHeader(audio) };
+  return { inPath, outPath: opts.dry ? null : outPath, fmt, size, meta, audioStart, rc4keyLen, check, ok: !!snapHeader(audio), skipped: false };
 }
 
 function walk(p) {
@@ -167,26 +181,26 @@ function main() {
     process.exit(1);
   }
   const input = argv[0];
-  let outDir = null, dry = false, metaNames = false, manifest = false;
+  let outDir = null, dry = false, metaNames = false, manifest = false, skipExisting = false;
   for (let i = 1; i < argv.length; i++) {
     if (argv[i] === '-o' || argv[i] === '--out') outDir = argv[++i];
     else if (argv[i] === '--dry') dry = true;
     else if (argv[i] === '--meta-names') metaNames = true;
     else if (argv[i] === '--manifest') manifest = true;
+    else if (argv[i] === '--skip-existing') skipExisting = true;
   }
   const files = walk(input);
   if (!files.length) { console.log('没找到 .ncm 文件'); process.exit(1); }
   if (!outDir) outDir = path.join(path.dirname(files[0]), 'converted');
 
   console.log('共 ' + files.length + ' 个 ncm → ' + (dry ? '(dry-run)' : outDir));
-  let ok = 0, bad = 0, bytes = 0, checked = 0, good = 0;
+  let ok = 0, bad = 0, bytes = 0, checked = 0, good = 0, skipped = 0;
   const list = [];
   const t0 = Date.now();
   files.forEach((f, i) => {
     try {
-      const r = convert(f, outDir, { dry, metaNames });
-      bytes += r.size;
-      if (r.ok) ok++; else bad++;
+      const r = convert(f, outDir, { dry, metaNames, skipExisting });
+      if (r.skipped) { skipped++; } else { bytes += r.size; if (r.ok) ok++; else bad++; }
       if (r.check !== null) {
         checked++;
         if (r.check > 0.9 && r.check < 1.1) good++;
@@ -209,14 +223,23 @@ function main() {
       console.log('  ❌ ' + path.basename(f) + ' : ' + e.message);
     }
   });
-  console.log('\n完成：音频头合法 ' + ok + ' / 失败 ' + bad + '，输出 ' + (bytes / 1073741824).toFixed(2) + ' GB，用时 ' +
-    ((Date.now() - t0) / 1000).toFixed(1) + 's');
+  console.log('\n完成：新转换 ' + ok + ' / 跳过已存在 ' + skipped + ' / 失败 ' + bad + '，本次写出 ' +
+    (bytes / 1073741824).toFixed(2) + ' GB，用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's');
   if (checked) console.log('一致性校验：' + good + '/' + checked + ' 个文件的「码率×时长」与实际大小吻合（说明解密正确）');
   if (manifest && list.length) {
     fs.mkdirSync(outDir, { recursive: true });
     const mf = path.join(outDir, 'ncm-manifest.json');
-    fs.writeFileSync(mf, JSON.stringify(list, null, 1));
-    console.log('已写出清单: ' + mf + '（' + list.length + ' 首，含歌名/歌手/码率/时长）');
+    let merged = list;
+    try {
+      const old = JSON.parse(fs.readFileSync(mf, 'utf8'));
+      const byFile = new Map();
+      old.forEach(o => byFile.set(o.file, o));
+      list.forEach(o => byFile.set(o.file, o));
+      merged = Array.from(byFile.values()).sort((a, b) => String(a.file).localeCompare(String(b.file)));
+      console.log('清单合并：原有 ' + old.length + ' + 本次 ' + list.length + ' → ' + merged.length + ' 首');
+    } catch (e) { /* 首次运行没有旧清单 */ }
+    fs.writeFileSync(mf, JSON.stringify(merged, null, 1));
+    console.log('已写出清单: ' + mf + '（' + merged.length + ' 首，含歌名/歌手/码率/时长）');
   }
 }
 
