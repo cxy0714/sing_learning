@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>唱歌音准实时监测 · do re mi 调音器</title>
+<meta name="description" content="网页版实时音高检测：用 do re mi fa sol la xi 显示你唱的音、偏差音分和标准频率，可录音、导出数据用于分析音准练习。" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap">
+    <h1>🎤 唱歌音准实时监测</h1>
+    <p class="sub">用 <b>do re mi fa sol la xi</b> 显示你唱的音 · 标注每个音的标准频率 · 录音导出，方便逐音分析</p>
+  </div>
+</header>
+
+<main class="wrap grid">
+
+  <!-- ============ 实时音准 ============ -->
+  <section class="card card--tuner">
+    <div class="card-head">
+      <h2>① 实时音准</h2>
+      <div class="row wrap">
+        <button id="micBtn" class="btn btn-primary">开始收音</button>
+        <label class="field">A4 = <input id="a4Input" type="number" min="415" max="466" step="1" value="440" /> Hz</label>
+        <label class="field checkbox"><input id="flatChk" type="checkbox" /> 黑键用 ♭ 显示</label>
+      </div>
+    </div>
+
+    <p id="micStatus" class="status">点击「开始收音」并允许使用麦克风。全程在你自己浏览器里计算，声音不会上传。</p>
+
+    <div class="tuner-grid">
+      <div class="tuner-left">
+        <div class="big-note">
+          <div class="big-note-main">
+            <span id="noteSol" class="sol">--</span>
+            <span id="noteOct" class="oct"></span>
+          </div>
+          <div id="noteLetter" class="letter">等待开始…</div>
+          <div id="noteHint" class="hint">一次只唱一个长音，唱稳 2~3 秒</div>
+        </div>
+
+        <div class="readouts">
+          <div class="readout"><span class="k">实时频率</span><span class="v"><b id="freqVal">--</b> Hz</span></div>
+          <div class="readout"><span class="k">偏差</span><span class="v"><b id="centsVal">--</b> 音分</span></div>
+          <div class="readout"><span class="k">音量</span><span class="v level"><i id="levelFill"></i></span></div>
+          <div class="readout"><span class="k">稳定度</span><span class="v"><b id="confVal">--</b></span></div>
+        </div>
+      </div>
+
+      <div class="tuner-right">
+        <div class="meter">
+          <div class="meter-track">
+            <div id="needle" class="needle"></div>
+          </div>
+          <div class="meter-labels"><span>低 50</span><span>低 25</span><span>准</span><span>高 25</span><span>高 50</span></div>
+          <p class="meter-tip">指针偏左 = 你唱得比标准音<b>低</b>；偏右 = 比标准音<b>高</b>。1 个半音 = 100 音分。</p>
+        </div>
+
+        <div class="ladder-head">
+          <span>标准音对照（<select id="octaveSel" class="mini-select"></select> 组）</span>
+          <button id="playScaleBtn" class="btn btn-ghost btn-sm">▶ 播放整条音阶</button>
+        </div>
+        <div id="ladder" class="ladder"></div>
+        <p class="muted small">点任意一格可以播放该音的标准音高，跟着它唱，再对比上面的指针。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 标准频率表 ============ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>② 标准频率表（背不下来就看这里）</h2>
+    </div>
+    <p class="muted small">十二平均律，当前 A4 = <b id="a4Label">440</b> Hz。
+      表里是所有音的标准频率，绿色表示你现在正好在唱它。改上面的「组」可以看别的八度。</p>
+    <div class="table-scroll">
+      <table class="ref-table">
+        <thead><tr><th>唱名</th><th>音名</th><th>标准频率</th><th>操作</th></tr></thead>
+        <tbody id="refBody"></tbody>
+      </table>
+    </div>
+    <details class="tip">
+      <summary>频率是怎么算出来的？（不想看可以跳过）</summary>
+      <p>从 A4 = 440 Hz 出发，每升高一个半音，频率乘以 2 的 1/12 次方（≈1.05946）：</p>
+      <p class="mono">f = A4 × 2^((n − 69) / 12)</p>
+      <p>其中 n 是 MIDI 音号，中央 C（do）记作 60 号，A4（la）是 69 号。
+      所以 <b>do4 = 261.63 Hz</b>，re4 = 293.66 Hz，mi4 = 329.63 Hz，fa4 = 349.23 Hz，
+      sol4 = 392.00 Hz，la4 = 440.00 Hz，xi4 = 493.88 Hz，do5 = 523.25 Hz。</p>
+      <p>音分（cent）是偏差单位：<b>100 音分 = 1 个半音</b>。
+      指针在 ±25 音分以内听起来基本就是准的，±50 音分以内算「接近」。</p>
+    </details>
+  </section>
+
+  <!-- ============ 录音与统计 ============ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>③ 录音 · 统计 · 导出</h2>
+      <div class="row wrap">
+        <button id="recBtn" class="btn">⏺ 开始录音</button>
+        <button id="jsonBtn" class="btn btn-ghost btn-sm">导出 JSON</button>
+        <button id="csvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
+        <button id="clearBtn" class="btn btn-ghost btn-sm">清空本次</button>
+      </div>
+    </div>
+
+    <div class="rec-status">
+      <span id="recDot" class="dot"></span>
+      <span id="recText">未录音</span>
+      <span id="recCount" class="muted"></span>
+    </div>
+
+    <div id="summary" class="summary"></div>
+
+    <div class="table-scroll">
+      <table class="stat-table">
+        <thead><tr><th>音</th><th>时长</th><th>平均偏差</th><th>平均|偏差|</th><th>±50 内</th></tr></thead>
+        <tbody id="statBody"><tr><td colspan="5" class="muted center">还没有录音数据</td></tr></tbody>
+      </table>
+    </div>
+
+    <p id="statHint" class="muted small"></p>
+
+    <p class="muted small">
+      <b>推荐录法：</b>按 do re mi fa sol la xi do 的顺序，每个音唱 2~3 秒长音，中间可以换气，一共 30 秒左右。
+      录完点「导出 JSON」，把文件发给我，我可以逐音告诉你哪个音偏高、偏高多少、稳不稳。
+    </p>
+  </section>
+
+  <!-- ============ 单音跟唱测试 ============ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>④ 单音跟唱测试</h2>
+    </div>
+    <p class="muted small">先听 1.5 秒标准音 → 再跟着唱 5 秒 → 立刻出分数。建议戴耳机，避免音箱的声音被麦克风收进去。</p>
+    <div class="row wrap">
+      <select id="pracSel" class="mini-select"></select>
+      <button id="pracBtn" class="btn">开始测试</button>
+    </div>
+    <div id="pracResult" class="prac-result">还没有测试结果。先点「开始收音」，再选一个音开始测试。</div>
+  </section>
+
+  <!-- ============ 轨迹图 ============ -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>⑤ 音高轨迹图</h2>
+      <span id="chartInfo" class="muted small"></span>
+    </div>
+    <canvas id="chart" class="chart"></canvas>
+    <p class="muted small">横轴是时间，纵轴是音高，绿色点 = 偏差在 ±25 音分内，黄色 ±50 内，红色更偏。
+      每一条横线是一个半音的位置，看出你唱到哪个音会「飘上去」或者「够不到」。</p>
+  </section>
+
+  <!-- ============ 本地记录 ============ -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>⑥ 存在这台电脑上的录音</h2>
+      <div class="row">
+        <button id="dlAllBtn" class="btn btn-ghost btn-sm">导出全部 JSON</button>
+        <button id="delAllBtn" class="btn btn-ghost btn-sm danger">全部删除</button>
+      </div>
+    </div>
+    <div id="sessions" class="sessions"></div>
+  </section>
+
+  <!-- ============ 说明 ============ -->
+  <section class="card card--wide">
+    <div class="card-head"><h2>使用须知 / 怎么练</h2></div>
+    <div class="cols">
+      <div>
+        <h3>让它测得更准</h3>
+        <ul>
+          <li>用 Chrome / Edge / Safari，必须是 <b>https</b> 或者 <b>localhost</b>，否则浏览器不给用麦克风。</li>
+          <li>安静房间，麦克风离嘴 15~25 cm，别对着出风口。</li>
+          <li>一次只唱一个长音（2~3 秒以上），唱稳了再看指针，别唱抖音。</li>
+          <li>鼠标/手机靠近音箱会收进伴奏声，戴耳机最干净。</li>
+          <li>你唱得太低（男低音区）或太高（哨音区）可能超出检测范围（约 C2~E6）。</li>
+        </ul>
+      </div>
+      <div>
+        <h3>针对「sol、la 容易偏高」的练法</h3>
+        <ol>
+          <li>先在②里点「听」，把 sol 和 la 的标准音各听 3 遍，记住那个高度。</li>
+          <li>慢慢唱 sol → la，看指针：如果一到 sol 指针就冲到右边很多，说明你是<b>靠往上滑</b>找音的，而不是直接落在音上。</li>
+          <li>改成「先想好高度再出声」：先在心里唱一次 sol，再出声，出声后立刻看是不是在 ±25 音分内。</li>
+          <li>从高往低唱：do5 → xi → la → sol，比从低往高更容易找准，因为不容易越滑越高。</li>
+          <li>用④做单音测试，每个音重复 5 次，记录分数，看哪个音最难稳。</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>纯前端页面，不联网、不上传任何声音，所有计算都在你的浏览器里完成 · 录音存在你自己的浏览器本地。</p>
+    <p class="muted small">可作为 GitHub Pages 静态站点部署，直接把这个文件夹传上去就行。</p>
+  </div>
+</footer>
+
+<script src="js/pitch.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
