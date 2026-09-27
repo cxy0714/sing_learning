@@ -1,4 +1,4 @@
-<#
+﻿<#
   人声分离（去掉伴奏，只留人声）—— 为了让「音高线」真正跟上人声
   模型：Demucs (htdemucs)，Meta 开源，最主流的开源人声分离方案之一
         https://github.com/facebookresearch/demucs
@@ -17,7 +17,7 @@
 
   首次准备（已装好可跳过）：
     python -m venv %USERPROFILE%\.demucs-env
-    %USERPROFILE%\.demucs-env\Scripts\pip install demucs
+    %USERPROFILE%\.demucs-env\Scripts\pip install demucs numpy
 
   CPU 上大约 1~3 分钟/首（4 分钟的歌）；有 NVIDIA 显卡会快很多。
 #>
@@ -31,7 +31,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $envDir = Join-Path $env:USERPROFILE '.demucs-env'
 $py = Join-Path $envDir 'Scripts\python.exe'
-if (-not (Test-Path $py)) { throw "没找到 Demucs 环境：$envDir`n先执行：`n  python -m venv `"$envDir`"`n  & `"$py`" -m pip install demucs" }
+if (-not (Test-Path $py)) { throw "没找到 Demucs 环境：$envDir`n先执行：`n  python -m venv `"$envDir`"`n  & `"$py`" -m pip install demucs numpy" }
 $ff = (Get-Command ffmpeg -ErrorAction SilentlyContinue)
 if (-not $ff -and -not $KeepWav) { throw "没找到 ffmpeg（转 mp3 需要）。可以装 ffmpeg，或加 -KeepWav 只输出 wav。" }
 
@@ -51,19 +51,20 @@ foreach ($f in $files) {
   $t0 = Get-Date
   & $py -m demucs --two-stems=vocals -n $Model -o $tmp $f.FullName
   if ($LASTEXITCODE -ne 0) { Write-Warning "分离失败：$($f.Name)"; continue }
-  $sub = Get-ChildItem $tmp -Recurse -Directory -Filter $Model | Select-Object -First 1
-  if (-not $sub) { Write-Warning "找不到输出目录：$($f.Name)"; continue }
-  $v = Join-Path $sub.FullName 'vocals.wav'
-  $n = Join-Path $sub.FullName 'no_vocals.wav'
+  # demucs 输出在 <tmp>\<model>\<曲名>\vocals.wav，直接按文件名递归找最稳
+  $vf = Get-ChildItem $tmp -Recurse -File -Filter 'vocals.wav' | Select-Object -First 1
+  $nf = Get-ChildItem $tmp -Recurse -File -Filter 'no_vocals.wav' | Select-Object -First 1
+  if (-not $vf) { Write-Warning "找不到 vocals.wav：$($f.Name)"; continue }
+  $v = $vf.FullName
+  $n = if ($nf) { $nf.FullName } else { $null }
   $base = Join-Path $Out $f.BaseName
   if ($KeepWav) {
     Copy-Item $v "$base.vocals.wav" -Force
     Copy-Item $n "$base.no_vocals.wav" -Force
   } else {
     & ffmpeg -y -v error -i $v -b:a "${Bitrate}k" "$base.vocals.mp3"
-    & ffmpeg -y -v error -i $n -b:a "${Bitrate}k" "$base.no_vocals.mp3"
+    if ($n) { & ffmpeg -y -v error -i $n -b:a "${Bitrate}k" "$base.no_vocals.mp3" }
   }
-  Remove-Item $sub.FullName -Recurse -Force -ErrorAction SilentlyContinue
   Write-Host ("   ✅ " + [math]::Round(((Get-Date)-$t0).TotalSeconds) + " 秒 → " + $f.BaseName + ".vocals.mp3") -ForegroundColor Green
 }
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -118,6 +118,12 @@
           <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在②里给你看对不对；</li>
       <li>麦克风记录<b>你唱的音高线</b>，和它叠在一起，<b>就能给任意本地歌曲打分</b>了。</li>
     </ol>
+    <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
+      💡 <b>想让音高线更准（推荐）</b>：浏览器里只能"尽力避开"贝斯和鼓，伴奏一满还是会被带跑。
+      现在主流做法是<b>先把人声分离出来</b>（Demucs / UVR），再提取音高 —— 本仓库给了一个脚本：
+      <code>powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "你的歌.mp3"</code>
+      分离出的 <b>xxx.vocals.mp3</b> 在下面选进来，线就会干净非常多（纯人声时可以把「人声滤波」关掉）。
+    </p>
     <p class="muted small">
       ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把歌一起收进去。<br>
       ⚠️ 网易云下载的 <b>.ncm / .uc!</b> 是加密格式，浏览器解不了，请先用工具转成 mp3/flac。<br>
