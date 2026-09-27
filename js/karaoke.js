@@ -33,6 +33,13 @@
   function scoreClass(s) { return s >= 85 ? 'ok' : (s >= 60 ? 'warn' : 'bad'); }
 
   var LS_SET = 'vpm.settings.v1';
+
+  /* 提取旋律时的音高搜索范围：限制在人声基频区，伴奏里的贝斯/底鼓（<165Hz）直接被排除 */
+  var VOCAL_PRESETS = [
+    { id: 'male',   label: '男声（E3–C5，165–523Hz）', lo: 164.8, hi: 523.3 },
+    { id: 'female', label: '女声（G3–E5，196–659Hz）', lo: 196.0, hi: 659.3 },
+    { id: 'wide',   label: '很宽（E2–E5，82–659Hz）',  lo: 82.4,  hi: 659.3 }
+  ];
   var LS_KARA = 'vpm.karaoke.v1';
 
   /* ---------- 状态 ---------- */
@@ -54,7 +61,9 @@
     /* 自由练习 */
     freeRec: false, audioEl: null, audioUrl: null,
     refTrack: null, refSegs: null, refShiftOct: 0,
-    lrc: null, _lyIdx: -1
+    lrc: null, _lyIdx: -1,
+    vocalBand: true,         // 人声带通滤波（去贝斯/镲片），默认开
+    vocalPreset: 'male'      // 音高搜索范围（排除贝斯/低音提琴等伴奏声部）
   };
 
   /* ============================================================
@@ -63,6 +72,7 @@
   function init() {
     loadSettings();
     buildSongList();
+    buildVocalSelect();
     bindEvents();
     selectSong(LIB[0].id, true);
     updateRangeBadge();
@@ -87,6 +97,8 @@
       if (typeof k.guide === 'boolean') S.guide = k.guide;
       if (typeof k.metro === 'boolean') S.metro = k.metro;
       if (typeof k.transpose === 'number') S.transpose = k.transpose;
+      if (typeof k.vocalBand === 'boolean') S.vocalBand = k.vocalBand;
+      if (k.vocalPreset) S.vocalPreset = k.vocalPreset;
     } catch (e) {}
     $('speedSel').value = String(S.speed);
     $('guideChk').checked = S.guide;
@@ -96,7 +108,8 @@
   function saveSettings() {
     try {
       localStorage.setItem(LS_KARA, JSON.stringify({
-        speed: S.speed, guide: S.guide, metro: S.metro, transpose: S.transpose
+        speed: S.speed, guide: S.guide, metro: S.metro, transpose: S.transpose,
+        vocalBand: S.vocalBand, vocalPreset: S.vocalPreset
       }));
     } catch (e) {}
   }
@@ -106,6 +119,19 @@
     var hi = PT.describeMidi(S.rangeHigh, S.a4, false);
     $('rangeBadge').innerHTML = '我的音域：<b>' + lo.solfege + lo.octave + '</b> ' + num(lo.freq, 1) + ' Hz ~ <b>' +
       hi.solfege + hi.octave + '</b> ' + num(hi.freq, 1) + ' Hz （在主页①里改）';
+  }
+
+  function buildVocalSelect() {
+    var sel = $('vocalSel');
+    sel.innerHTML = '';
+    VOCAL_PRESETS.forEach(function (p) {
+      var op = document.createElement('option');
+      op.value = p.id;
+      op.textContent = p.label;
+      sel.appendChild(op);
+    });
+    sel.value = S.vocalPreset;
+    $('vocalBandChk').checked = S.vocalBand;
   }
 
   function buildSongList() {
@@ -574,23 +600,38 @@
     /* 从本地音频里估出来的主旋律线：连续阶梯线（同一音横向、换音竖线），静音处断开 */
     if (S.refTrack && S.refTrack.length) {
       var rShift = S.refShiftOct || 0;
-      ctx.strokeStyle = 'rgba(134,239,172,.8)';
-      ctx.lineWidth = 2.2;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'butt';
-      ctx.beginPath();
+      /* (a) 真有检测到人声的段落：实线 */
+      ctx.strokeStyle = 'rgba(134,239,172,.9)';
+      ctx.lineWidth = 2.4;
       var started2 = false, prevQ = null, prevY = 0;
-      for (var r2 = 0; r2 < S.refTrack.length; r2++) {
-        var rp = S.refTrack[r2];
-        if (rp.t > dur + 200) break;
-        if (rp.q === undefined || rp.gap) { started2 = false; prevQ = null; continue; }
-        var rx = X(rp.t), ry = Y(rp.q + rShift);
-        if (!started2) { ctx.moveTo(rx, ry); started2 = true; }
-        else if (rp.q !== prevQ) { ctx.lineTo(rx, prevY); ctx.lineTo(rx, ry); }
-        else { ctx.lineTo(rx, ry); }
-        prevQ = rp.q; prevY = ry;
+      function drawSeg(detectedOnly) {
+        ctx.beginPath();
+        started2 = false; prevQ = null; prevY = 0;
+        for (var r2 = 0; r2 < S.refTrack.length; r2++) {
+          var rp = S.refTrack[r2];
+          if (rp.t > dur + 200) break;
+          if (rp.q === undefined || rp.gap || (detectedOnly ? !rp.detected : rp.detected)) {
+            if (started2) { ctx.stroke(); started2 = false; prevQ = null; }
+            continue;
+          }
+          var ry = Y(rp.q + rShift);
+          if (!started2) { ctx.beginPath(); ctx.moveTo(X(rp.t), ry); started2 = true; }
+          else if (rp.q !== prevQ) { ctx.lineTo(X(rp.t), prevY); ctx.lineTo(X(rp.t), ry); }
+          else { ctx.lineTo(X(rp.t), ry); }
+          prevQ = rp.q; prevY = ry;
+        }
+        if (started2) ctx.stroke();
       }
-      ctx.stroke();
+      drawSeg(true);
+      /* (b) 没有真检测、由 Viterbi 推出来的段落：细虚线（提示"这段是估的"） */
+      ctx.save();
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = 'rgba(134,239,172,.40)';
+      ctx.lineWidth = 1.5;
+      drawSeg(false);
+      ctx.restore();
       ctx.fillStyle = 'rgba(134,239,172,.9)';
       ctx.font = '10px sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
@@ -1020,6 +1061,15 @@
     $('freeRecBtn').addEventListener('click', toggleFreeRec);
     $('syncRecBtn').addEventListener('click', syncSing);
     $('lrcChk').addEventListener('change', function () { S._lyIdx = -1; updateLyrics(S.songPos > -9000 ? S.songPos : 0); });
+    $('vocalSel').addEventListener('change', function () {
+      S.vocalPreset = this.value;
+      saveSettings();
+      if (S.refTrack && S.refTrack.length) {
+        $('refProgress').innerHTML = '已切换到「' + this.options[this.selectedIndex].textContent +
+          '」，请重新选择一次音频文件来重新提取（音频文件本身不用换）。';
+      }
+    });
+    $('vocalBandChk').addEventListener('change', function () { S.vocalBand = this.checked; saveSettings(); });
   }
 
   function changeTranspose(d) {
@@ -1081,6 +1131,36 @@
     });
   }
 
+  function vocalRange() {
+    for (var i = 0; i < VOCAL_PRESETS.length; i++) {
+      if (VOCAL_PRESETS[i].id === S.vocalPreset) return VOCAL_PRESETS[i];
+    }
+    return VOCAL_PRESETS[0];
+  }
+
+  /** 二阶双二次滤波器系数（RBJ cookbook） */
+  function biquadCoef(type, sr, f0, Q) {
+    var w0 = 2 * Math.PI * f0 / sr, cosw = Math.cos(w0), sinw = Math.sin(w0);
+    var alpha = sinw / (2 * (Q || 0.707));
+    var b0, b1, b2;
+    if (type === 'hp') { b0 = (1 + cosw) / 2; b1 = -(1 + cosw); b2 = (1 + cosw) / 2; }
+    else { b0 = (1 - cosw) / 2; b1 = 1 - cosw; b2 = (1 - cosw) / 2; }
+    var a0 = 1 + alpha, a1 = -2 * cosw, a2 = 1 - alpha;
+    return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+  }
+
+  /** 原地滤波（只多用一个临时数组，省内存） */
+  function filterInPlace(x, cf) {
+    var x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (var i = 0; i < x.length; i++) {
+      var xn = x[i];
+      var yn = cf.b0 * xn + cf.b1 * x1 + cf.b2 * x2 - cf.a1 * y1 - cf.a2 * y2;
+      x2 = x1; x1 = xn; y2 = y1; y1 = yn;
+      x[i] = yn;
+    }
+    return x;
+  }
+
   /** 分块处理，避免卡死页面；返回连续的旋律线 [{t, f, midi, q, conf, rms, gap}] */
   function extractReference(audioBuf, onProgress) {
     return new Promise(function (resolve) {
@@ -1090,12 +1170,23 @@
       var len = Math.floor(audioBuf.length / ratio);
       var chs = [];
       for (var c = 0; c < audioBuf.numberOfChannels; c++) chs.push(audioBuf.getChannelData(c));
-      var mono = new Float32Array(len);
-      for (var i = 0; i < len; i++) {
-        var acc = 0;
-        for (var k = 0; k < chs.length; k++) acc += chs[k][i * ratio];
-        mono[i] = acc / chs.length;
+
+      /* 先按原始采样率混成单声道，再带通滤波，最后降采样。
+         带通：高通 120Hz 甩掉贝斯/底鼓（它们周期性最强，不滤掉 YIN 会一直锁到贝斯），
+               低通 1200Hz 甩掉镲片/齿音，同时充当降采样的抗混叠滤波。 */
+      var full = new Float32Array(audioBuf.length);
+      for (var i0 = 0; i0 < audioBuf.length; i0++) {
+        var acc0 = 0;
+        for (var k0 = 0; k0 < chs.length; k0++) acc0 += chs[k0][i0];
+        full[i0] = acc0 / chs.length;
       }
+      if (S.vocalBand) {
+        filterInPlace(full, biquadCoef('hp', srcRate, 120, 0.707));
+        filterInPlace(full, biquadCoef('lp', srcRate, 1200, 0.707));
+      }
+      var mono = new Float32Array(len);
+      for (var i = 0; i < len; i++) mono[i] = full[i * ratio];
+      full = null;
       var win = 1024, hop = 512;                              // 50% 重叠，时间分辨率约 46ms
       var frames = Math.max(1, Math.floor(Math.max(0, len - win) / hop) + 1);
       var raw = [];
@@ -1110,12 +1201,13 @@
           for (var j = 0; j < buf.length; j++) rms += buf[j] * buf[j];
           rms = Math.sqrt(rms / buf.length);
           var t = (off / sr) * 1000;
-          if (rms < 0.010) { raw.push({ t: t, midi: null, f: null, conf: 0, rms: rms }); continue; }
-          var r = PT.detectPitch(buf, sr, { minFreq: 70, maxFreq: 1100, threshold: 0.16 });
+          if (rms < 0.005) { raw.push({ t: t, midi: null, f: null, conf: 0, rms: rms }); continue; }
+          var vp = vocalRange();
+          var r = PT.detectPitch(buf, sr, { minFreq: vp.lo, maxFreq: vp.hi, threshold: 0.16 });
           raw.push({
             t: t,
             f: r.freq > 0 ? r.freq : null,
-            midi: (r.freq > 0 && r.confidence > 0.45) ? PT.freqToMidi(r.freq, S.a4) : null,
+            midi: (r.freq > 0 && r.confidence > 0.25) ? PT.freqToMidi(r.freq, S.a4) : null,
             conf: r.confidence || 0,
             rms: rms
           });
@@ -1175,6 +1267,7 @@
       return {
         t: r.t, f: r.f, midi: r.midi, conf: r.conf, rms: r.rms,
         q: path[k],
+        detected: r.midi !== null,
         gap: (r.midi === null && r.rms < 0.012)
       };
     });
@@ -1203,7 +1296,9 @@
     });
     flush();
     return segs.filter(function (s) {
-      return (s.lastT - s.startMs) >= 120 && s.n >= 3 && s.raws.length >= 2;
+      /* 至少 1/3 的帧是真的检测到音高（其余是 Viterbi 推的），才算可靠的音、才拿去打分 */
+      return (s.lastT - s.startMs) >= 120 && s.n >= 3 &&
+             s.raws.length >= Math.max(2, Math.ceil(s.n * 0.33));
     }).map(function (s) {
       var fine = median(s.raws);
       return { startMs: s.startMs, endMs: s.lastT, midi: Math.round(fine), midiFine: fine, n: s.n };
