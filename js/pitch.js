@@ -147,7 +147,28 @@
     return out;
   }
 
+  /* ---------- 音名 <-> MIDI（用于「我的音域」设置） ---------- */
+  var SEMI = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+  /** 'A2' / 'Bb3' / 'F#4' -> MIDI 音号，失败返回 null */
+  function midiFromName(name) {
+    var m = /^\s*([A-Ga-g])\s*([#b♯♭]?)\s*(-?\d+)\s*$/.exec(String(name));
+    if (!m) return null;
+    var base = SEMI[m[1].toUpperCase()];
+    var acc = m[2];
+    if (acc === '#' || acc === '♯') base += 1;
+    if (acc === 'b' || acc === '♭') base -= 1;
+    return (parseInt(m[3], 10) + 1) * 12 + base;
+  }
+
+  /** MIDI 音号 -> 'A4' */
+  function midiToName(midi) {
+    return LETTERS[noteIndex(midi)] + octaveOf(midi);
+  }
+
   global.PitchTool = {
+    midiFromName: midiFromName,
+    midiToName: midiToName,
     detectPitch: detectPitch,
     midiToFreq: midiToFreq,
     freqToMidi: freqToMidi,

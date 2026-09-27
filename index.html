@@ -26,10 +26,18 @@
         <button id="micBtn" class="btn btn-primary">开始收音</button>
         <label class="field">A4 = <input id="a4Input" type="number" min="415" max="466" step="1" value="440" /> Hz</label>
         <label class="field checkbox"><input id="flatChk" type="checkbox" /> 黑键用 ♭ 显示</label>
+        <label class="field">我的音域 <select id="rangeSel" class="mini-select"></select></label>
       </div>
     </div>
 
     <p id="micStatus" class="status">点击「开始收音」并允许使用麦克风。全程在你自己浏览器里计算，声音不会上传。</p>
+
+    <div id="rangeCustomRow" class="row wrap range-custom" hidden>
+      <label class="field">最低音 <select id="rangeLowSel" class="mini-select"></select></label>
+      <label class="field">最高音 <select id="rangeHighSel" class="mini-select"></select></label>
+      <span class="muted small">（改了这里会自动变成「自定义」）</span>
+    </div>
+    <p id="rangeInfo" class="status range-info"></p>
 
     <div class="tuner-grid">
       <div class="tuner-left">
@@ -67,6 +75,23 @@
         <p class="muted small">点任意一格可以播放该音的标准音高，跟着它唱，再对比上面的指针。</p>
       </div>
     </div>
+
+    <div class="live-block">
+      <div class="live-head">
+        <span class="live-title">📈 实时音高曲线（跟着你唱的线）</span>
+        <label class="field">时间窗
+          <select id="liveWin" class="mini-select">
+            <option value="5">5 秒</option>
+            <option value="10" selected>10 秒</option>
+            <option value="20">20 秒</option>
+          </select>
+        </label>
+        <label class="field checkbox"><input id="scopeChk" type="checkbox" checked /> 显示声波</label>
+        <span class="muted small">线在绿色带里 = 准；黄 = 偏一点；红 = 偏很多</span>
+      </div>
+      <canvas id="liveChart" class="live-chart"></canvas>
+      <canvas id="scope" class="scope"></canvas>
+    </div>
   </section>
 
   <!-- ============ 标准频率表 ============ -->
@@ -75,7 +100,8 @@
       <h2>② 标准频率表（背不下来就看这里）</h2>
     </div>
     <p class="muted small">十二平均律，当前 A4 = <b id="a4Label">440</b> Hz。
-      表里是所有音的标准频率，绿色表示你现在正好在唱它。改上面的「组」可以看别的八度。</p>
+      表里是这个八度所有音的标准频率，绿色 = 你现在正好在唱它，<b>灰掉 = 超出你设的音域</b>。
+      改①里的「组」可以看别的八度（你的音域 A2–A4 主要看第 2、3 组）。</p>
     <div class="table-scroll">
       <table class="ref-table">
         <thead><tr><th>唱名</th><th>音名</th><th>标准频率</th><th>操作</th></tr></thead>
@@ -149,8 +175,9 @@
       <span id="chartInfo" class="muted small"></span>
     </div>
     <canvas id="chart" class="chart"></canvas>
-    <p class="muted small">横轴是时间，纵轴是音高，绿色点 = 偏差在 ±25 音分内，黄色 ±50 内，红色更偏。
-      每一条横线是一个半音的位置，看出你唱到哪个音会「飘上去」或者「够不到」。</p>
+    <p class="muted small">这是<b>录完之后的完整回放</b>：横轴是时间，纵轴是音高，绿色 = 偏差在 ±25 音分内，黄色 ±50 内，红色更偏。
+      浅蓝色区域是你设的<b>音域范围</b>（上下两条虚线），唱出这个区域就是超范围了。
+      想边唱边看，用①下面的「实时音高曲线」。</p>
   </section>
 
   <!-- ============ 本地记录 ============ -->
@@ -170,23 +197,31 @@
     <div class="card-head"><h2>使用须知 / 怎么练</h2></div>
     <div class="cols">
       <div>
+        <h3>✅ 第一次用，先做这 3 步</h3>
+        <ol>
+          <li><b>设音域</b>：右上角「我的音域」选你的声部。你测出来是 <b>A2–A4（110–440 Hz）</b>，选「男中音偏男高」。
+              音阶表里<b>灰掉</b>的音在你音域外，先别硬唱。</li>
+          <li><b>开始收音</b>：点「开始收音」并允许麦克风（必须是 https 或 localhost）。</li>
+          <li><b>看实时曲线</b>：①下面那条线会跟着你的音高实时滚动。线落在<b>绿色带</b>里 = 准，黄 = 偏一点，红 = 偏很多。</li>
+        </ol>
         <h3>让它测得更准</h3>
         <ul>
-          <li>用 Chrome / Edge / Safari，必须是 <b>https</b> 或者 <b>localhost</b>，否则浏览器不给用麦克风。</li>
           <li>安静房间，麦克风离嘴 15~25 cm，别对着出风口。</li>
-          <li>一次只唱一个长音（2~3 秒以上），唱稳了再看指针，别唱抖音。</li>
-          <li>鼠标/手机靠近音箱会收进伴奏声，戴耳机最干净。</li>
-          <li>你唱得太低（男低音区）或太高（哨音区）可能超出检测范围（约 C2~E6）。</li>
+          <li>一次只唱一个长音（2~3 秒以上），唱稳了再看，别唱抖音。</li>
+          <li>放参考音时<b>戴耳机</b>，否则麦克风会把音箱的声音也收进去。</li>
+          <li>检测范围约 C2~E6。太低或太虚会显示「没听到稳定的音高」。</li>
         </ul>
       </div>
       <div>
-        <h3>针对「sol、la 容易偏高」的练法</h3>
+        <h3>🎯 针对「sol、la 容易偏高」的练法</h3>
         <ol>
-          <li>先在②里点「听」，把 sol 和 la 的标准音各听 3 遍，记住那个高度。</li>
-          <li>慢慢唱 sol → la，看指针：如果一到 sol 指针就冲到右边很多，说明你是<b>靠往上滑</b>找音的，而不是直接落在音上。</li>
-          <li>改成「先想好高度再出声」：先在心里唱一次 sol，再出声，出声后立刻看是不是在 ±25 音分内。</li>
-          <li>从高往低唱：do5 → xi → la → sol，比从低往高更容易找准，因为不容易越滑越高。</li>
-          <li>用④做单音测试，每个音重复 5 次，记录分数，看哪个音最难稳。</li>
+          <li>把音区调到 <b>第 3 组</b>（do3 = 130.81 Hz，sol3 = 196.00，la3 = 220.00）。
+              别在 do4 起：do4–do5 那一条音阶顶到你的天花板 A4，sol4 = 392、la4 = 440 当然上不去。</li>
+          <li>在②里点「▶ 听」，把 sol3、la3 各听 3 遍，记住那个高度。</li>
+          <li>慢慢唱 sol3 → la3，盯①的实时曲线：如果一到 sol 线就往上飘，说明你是<b>靠往上滑找音</b>，不是直接落在音上。</li>
+          <li>改成「先想好高度再出声」，出声后立刻看线有没有落进绿色带（±25 音分内）。</li>
+          <li>反向练：<b>do4 → xi3 → la3 → sol3</b>，从高往低唱更容易找准，不会越滑越高。</li>
+          <li>用④单音测试，每个音测 5 遍记分数，看哪个音最难稳。</li>
         </ol>
       </div>
     </div>

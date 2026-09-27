@@ -30,17 +30,36 @@
   var MAX_FREQ = 1300;   // ~E6
   var REC_INTERVAL = 70; // 录音采样间隔 ms
   var LS_KEY = 'vpm.sessions.v1';
+  var LS_SETTINGS = 'vpm.settings.v1';
+
+  /* 常见音域预设（写的是「能唱到的极限音」，不是舒服的音） */
+  var RANGE_PRESETS = [
+    { id: 'bass',      label: '男低音 Bass（E2–E4）',          low: 'E2', high: 'E4', oct: 2 },
+    { id: 'baritone',  label: '男中音 Baritone（A2–F4）',      low: 'A2', high: 'F4', oct: 3 },
+    { id: 'baritenor', label: '男中音偏男高（A2–A4）',         low: 'A2', high: 'A4', oct: 3 },
+    { id: 'tenor',     label: '男高音 Tenor（C3–A4）',         low: 'C3', high: 'A4', oct: 3 },
+    { id: 'alto',      label: '女低音 Alto（F3–F5）',          low: 'F3', high: 'F5', oct: 3 },
+    { id: 'mezzo',     label: '女中音 Mezzo（A3–A5）',         low: 'A3', high: 'A5', oct: 4 },
+    { id: 'soprano',   label: '女高音 Soprano（C4–C6）',       low: 'C4', high: 'C6', oct: 4 },
+    { id: 'custom',    label: '自定义…',                       low: null, high: null, oct: null }
+  ];
 
   /* ---------- 全局状态 ---------- */
   var S = {
     /* 音频 */
     running: false, audioCtx: null, stream: null, analyser: null, micSource: null,
-    buf: null, lastAnalysis: 0, analysisInterval: 60,
+    buf: null, lastAnalysis: 0, analysisInterval: 60, lastDraw: 0,
     pitchHist: [],          // 最近检测到的频率，用于中位数平滑
     level: 0,
     current: null,          // { freq, conf, rms, note }
+    live: [],               // 实时曲线样本 { t, midi }
+    axis: { lo: 0, hi: 0 }, // 实时曲线纵轴的平滑跟随值
     /* 设置 */
-    a4: 440, useFlat: false, ladderOctave: 4,
+    a4: 440, useFlat: false, ladderOctave: 3,
+    liveWin: 10, scopeOn: true,
+    rangeLow: 45,           // A2 = 110 Hz
+    rangeHigh: 69,          // A4 = 440 Hz
+    rangePreset: 'baritenor',
     /* 录音 */
     recording: false, recStart: 0, lastPush: 0, track: [], lastStatsAt: 0,
     /* 本地记录 */
@@ -53,11 +72,15 @@
    * 启动
    * ============================================================ */
   function init() {
+    loadSettings();
     buildOctaveSelect();
+    buildRangeSelect();
     bindEvents();
     buildLadder();
     buildRefTable();
     buildPracticeSelect();
+    renderRangeInfo();
+    drawLive(performance.now());
     loadSessions();
     renderSessions();
     drawChart([]);
@@ -79,13 +102,25 @@
     });
     $('octaveSel').addEventListener('change', function () {
       S.ladderOctave = parseInt(this.value, 10);
+      saveSettings();
       buildLadder(); buildRefTable(); buildPracticeSelect();
+      renderRangeInfo();
+    });
+    $('rangeSel').addEventListener('change', function () { onRangePreset(this.value); });
+    $('rangeLowSel').addEventListener('change', function () { onCustomRange('low', parseInt(this.value, 10)); });
+    $('rangeHighSel').addEventListener('change', function () { onCustomRange('high', parseInt(this.value, 10)); });
+    $('liveWin').addEventListener('change', function () { S.liveWin = parseInt(this.value, 10) || 10; saveSettings(); });
+    $('scopeChk').addEventListener('change', function () {
+      S.scopeOn = this.checked;
+      $('scope').classList.toggle('hidden', !S.scopeOn);
+      saveSettings();
     });
     $('playScaleBtn').addEventListener('click', playScale);
     $('recBtn').addEventListener('click', toggleRecord);
     $('clearBtn').addEventListener('click', function () {
       if (S.recording) { setStatus('先停止录音再清空。'); return; }
       S.track = [];
+      clearLive();
       renderStats(null);
       setStatus('已清空本次录音数据。');
     });
@@ -191,9 +226,18 @@
     if (!S.running) return;
     requestAnimationFrame(loop);
     if (!ts) ts = performance.now();
-    if (ts - S.lastAnalysis < S.analysisInterval) return;
-    S.lastAnalysis = ts;
+    if (ts - S.lastDraw < 33) return;                     // 画面约 30fps
+    S.lastDraw = ts;
+    if (ts - S.lastAnalysis >= S.analysisInterval) {      // 音高分析约 16fps
+      S.lastAnalysis = ts;
+      analyze(ts);
+    }
+    drawLive(ts);                                         // 实时曲线跟着时间滚动
+    if (S.scopeOn) drawScope();
+  }
 
+  /* 一次音高分析：读缓冲区 -> 检测 -> 平滑 -> 更新界面 */
+  function analyze(ts) {
     S.analyser.getFloatTimeDomainData(S.buf);
     var rms = computeRms(S.buf);
     S.level = rms;
@@ -228,6 +272,7 @@
       }
     }
     S.current = cur;
+    pushLive(ts, cur);
 
     updateReadout(cur);
     if (S.recording) maybeRecord(cur, ts);
@@ -235,6 +280,172 @@
       S.lastStatsAt = ts;
       refreshRecordingUI();
     }
+  }
+
+  /* ============================================================
+   * 实时音高曲线 + 声波
+   * ============================================================ */
+  function pushLive(ts, cur) {
+    if (!cur) return;
+    S.live.push({ t: ts, midi: PT.freqToMidi(cur.freq, S.a4) });
+    var keepFrom = ts - (S.liveWin * 1000 + 2000);
+    while (S.live.length && S.live[0].t < keepFrom) S.live.shift();
+    if (S.live.length > 8000) S.live.splice(0, 2000);
+  }
+
+  function clearLive() {
+    S.live = [];
+    S.axis = { lo: 0, hi: 0 };
+    drawLive(performance.now());
+  }
+
+  /** 滚动的实时音高曲线：横轴=时间，纵轴=音高（每条横线是一个半音） */
+  function drawLive(now) {
+    var cv = $('liveChart');
+    if (!cv) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth || 640, h = cv.clientHeight || 210;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+    }
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var padL = 62, padR = 16, padT = 12, padB = 16;
+    var plotW = Math.max(40, w - padL - padR), plotH = Math.max(40, h - padT - padB);
+    var win = S.liveWin * 1000, t0 = now - win;
+
+    if (!S.live.length) {
+      ctx.fillStyle = '#4b5b7d';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('点「开始收音」对着麦克风唱，这里会有一条跟着你音高实时走的线', w / 2, h / 2);
+      return;
+    }
+
+    /* 可见样本 */
+    var vis = [];
+    for (var i = 0; i < S.live.length; i++) if (S.live[i].t >= t0) vis.push(S.live[i]);
+
+    /* 纵轴范围：跟随可见音高，向外取整到半音，并做平滑，避免画面抖 */
+    var mn = Infinity, mx = -Infinity;
+    vis.forEach(function (p) { if (p.midi < mn) mn = p.midi; if (p.midi > mx) mx = p.midi; });
+    if (!isFinite(mn)) { mn = 60; mx = 60; }
+    var lo = Math.floor(mn) - 1, hi = Math.ceil(mx) + 1;
+    if (hi - lo < 7) { var mid = (lo + hi) / 2; lo = mid - 3.5; hi = mid + 3.5; }
+    if (hi - lo > 26) { var mid2 = (lo + hi) / 2; lo = mid2 - 13; hi = mid2 + 13; }
+    if (S.axis.lo === 0 && S.axis.hi === 0) { S.axis.lo = lo; S.axis.hi = hi; }
+    S.axis.lo += (lo - S.axis.lo) * 0.10;
+    S.axis.hi += (hi - S.axis.hi) * 0.10;
+    var ay0 = S.axis.lo, ay1 = S.axis.hi;
+
+    function X(t) { return padL + (t - t0) / win * plotW; }
+    function Y(m) { return padT + (ay1 - m) / (ay1 - ay0) * plotH; }
+
+    /* 半音线 + 唱名 + ±25 音分「准音带」 */
+    var MAJ = [0, 2, 4, 5, 7, 9, 11];
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (var m = Math.ceil(ay0); m <= Math.floor(ay1); m++) {
+      var info = PT.describeMidi(m, S.a4, S.useFlat);
+      var major = MAJ.indexOf(info.pc) >= 0;
+      var out = isOutOfRange(m);
+      if (major && !out) {
+        ctx.fillStyle = 'rgba(74,222,128,.10)';
+        ctx.fillRect(padL, Y(m + 0.25), plotW, Y(m - 0.25) - Y(m + 0.25));
+      }
+      ctx.strokeStyle = major ? 'rgba(148,163,184,.32)' : 'rgba(148,163,184,.11)';
+      ctx.beginPath(); ctx.moveTo(padL, Y(m)); ctx.lineTo(padL + plotW, Y(m)); ctx.stroke();
+      ctx.fillStyle = out ? '#5b6b8c' : (major ? '#9fb0d0' : '#4d5c7c');
+      ctx.fillText(info.solfege + info.octave, padL - 6, Y(m));
+    }
+
+    /* 相邻半音的分界（±50 音分处），虚线 */
+    ctx.setLineDash([3, 4]);
+    ctx.strokeStyle = 'rgba(148,163,184,.15)';
+    for (var m2 = Math.ceil(ay0 - 0.5); m2 <= Math.floor(ay1 + 0.5); m2++) {
+      ctx.beginPath(); ctx.moveTo(padL, Y(m2 + 0.5)); ctx.lineTo(padL + plotW, Y(m2 + 0.5)); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+    /* 音高曲线：逐段上色 */
+    ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    var prev = null;
+    for (var k = 0; k < vis.length; k++) {
+      var p = vis[k];
+      var off = Math.abs(p.midi - Math.round(p.midi)) * 100;
+      var color = off <= 25 ? '#4ade80' : (off <= 50 ? '#fbbf24' : '#f87171');
+      if (prev && p.t - prev.t < 350) {
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(X(prev.t), Y(prev.midi));
+        ctx.lineTo(X(p.t), Y(p.midi));
+        ctx.stroke();
+      }
+      prev = p;
+    }
+
+    /* 当前点 */
+    var last = vis[vis.length - 1];
+    if (last && now - last.t < 500) {
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(X(last.t), Y(last.midi), 3.2, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(X(last.t), Y(last.midi), 7.5, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    /* 右边界 = 现在 */
+    ctx.strokeStyle = 'rgba(148,163,184,.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(padL + plotW, padT); ctx.lineTo(padL + plotW, padT + plotH); ctx.stroke();
+    ctx.fillStyle = '#7b8aad';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText('← 过去 ' + S.liveWin + ' 秒      现在', padL + 6, padT + 1);
+  }
+
+  /** 声波（时域波形），横向铺满最近约 85ms 的声音 */
+  function drawScope() {
+    var cv = $('scope');
+    if (!cv || !S.buf) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth || 640, h = cv.clientHeight || 56;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+    }
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.strokeStyle = 'rgba(148,163,184,.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+
+    var n = S.buf.length;
+    var mid = h / 2;
+    var amp = (h / 2 - 3) * 2.4;                 // 放大，看得清
+    ctx.strokeStyle = S.level > 0.35 ? '#f87171' : '#60a5fa';
+    ctx.beginPath();
+    for (var x = 0; x < w; x++) {
+      var i0 = Math.floor(x * n / w), i1 = Math.floor((x + 1) * n / w);
+      if (i1 <= i0) i1 = i0 + 1;
+      var mnv = 1, mxv = -1;
+      for (var i = i0; i < i1 && i < n; i++) {
+        var v = S.buf[i];
+        if (v < mnv) mnv = v;
+        if (v > mxv) mxv = v;
+      }
+      if (mnv > mxv) { mnv = 0; mxv = 0; }
+      var y0 = mid - mxv * amp, y1 = mid - mnv * amp;
+      if (y0 < 0) y0 = 0; if (y1 > h) y1 = h;
+      ctx.moveTo(x + 0.5, y0);
+      ctx.lineTo(x + 0.5, y1);
+    }
+    ctx.stroke();
   }
 
   /* ============================================================
@@ -303,6 +514,9 @@
     }
     $('centsVal').textContent = (c >= 0 ? '+' : '') + c.toFixed(0);
     $('centsVal').className = 'v-' + cls;
+    if (isOutOfRange(note.midi)) {
+      tip += '　⚠️ 超出你的音域（' + PT.midiToName(S.rangeLow) + '–' + PT.midiToName(S.rangeHigh) + '），别硬撑';
+    }
     $('noteHint').textContent = tip;
     $('confVal').textContent = Math.round(clamp(cur.conf, 0, 1) * 100) + '%';
 
@@ -347,6 +561,130 @@
     sel.value = S.ladderOctave;
   }
 
+  /* ============================================================
+   * 我的音域
+   * ============================================================ */
+  function isOutOfRange(midi) {
+    return midi < S.rangeLow || midi > S.rangeHigh;
+  }
+
+  function loadSettings() {
+    try {
+      var s = JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}');
+      if (s.a4 >= 415 && s.a4 <= 466) { S.a4 = s.a4; $('a4Input').value = s.a4; }
+      if (s.useFlat) { S.useFlat = true; $('flatChk').checked = true; }
+      if (s.ladderOctave >= 1 && s.ladderOctave <= 6) S.ladderOctave = s.ladderOctave;
+      if (s.rangeLow && s.rangeHigh && s.rangeHigh > s.rangeLow) {
+        S.rangeLow = s.rangeLow; S.rangeHigh = s.rangeHigh;
+      }
+      if (s.rangePreset) S.rangePreset = s.rangePreset;
+      if (s.liveWin) { S.liveWin = s.liveWin; $('liveWin').value = s.liveWin; }
+      if (s.scopeOn === false) {
+        S.scopeOn = false; $('scopeChk').checked = false;
+        $('scope').classList.add('hidden');
+      }
+    } catch (e) {}
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem(LS_SETTINGS, JSON.stringify({
+        a4: S.a4, useFlat: S.useFlat, ladderOctave: S.ladderOctave,
+        rangeLow: S.rangeLow, rangeHigh: S.rangeHigh, rangePreset: S.rangePreset,
+        liveWin: S.liveWin, scopeOn: S.scopeOn
+      }));
+    } catch (e) {}
+  }
+
+  function buildRangeSelect() {
+    var sel = $('rangeSel');
+    sel.innerHTML = '';
+    RANGE_PRESETS.forEach(function (p) {
+      var op = document.createElement('option');
+      op.value = p.id;
+      op.textContent = p.label;
+      sel.appendChild(op);
+    });
+    var known = RANGE_PRESETS.some(function (p) { return p.id === S.rangePreset; });
+    if (!known) S.rangePreset = 'baritenor';
+    sel.value = S.rangePreset;
+    buildRangeNoteSelects();
+    toggleCustomRow();
+  }
+
+  function buildRangeNoteSelects() {
+    [$('rangeLowSel'), $('rangeHighSel')].forEach(function (sel) {
+      sel.innerHTML = '';
+      for (var m = 36; m <= 84; m++) {                 // C2 ~ C6
+        var n = PT.describeMidi(m, S.a4, S.useFlat);
+        var op = document.createElement('option');
+        op.value = m;
+        op.textContent = n.letterName + ' · ' + n.solfege + n.octave + ' · ' + num(n.freq, 1) + ' Hz';
+        sel.appendChild(op);
+      }
+    });
+    $('rangeLowSel').value = S.rangeLow;
+    $('rangeHighSel').value = S.rangeHigh;
+  }
+
+  function toggleCustomRow() {
+    $('rangeCustomRow').hidden = (S.rangePreset !== 'custom');
+  }
+
+  function onRangePreset(id) {
+    var p = null;
+    RANGE_PRESETS.forEach(function (x) { if (x.id === id) p = x; });
+    if (!p) return;
+    if (p.id === 'custom') {
+      S.rangePreset = 'custom';
+      toggleCustomRow();
+      saveSettings();
+      return;
+    }
+    var lo = PT.midiFromName(p.low), hi = PT.midiFromName(p.high);
+    if (p.oct) { S.ladderOctave = p.oct; $('octaveSel').value = p.oct; }
+    applyRange(lo, hi, p.id);
+    setStatus('音域已设为 ' + p.low + ' – ' + p.high + '（' + num(PT.midiToFreq(lo, S.a4), 1) + ' ~ ' +
+              num(PT.midiToFreq(hi, S.a4), 1) + ' Hz）。下面音阶表里灰掉的音在你的音域外，先别硬唱。');
+  }
+
+  function onCustomRange(which, midi) {
+    if (!isFinite(midi)) return;
+    var lo = S.rangeLow, hi = S.rangeHigh;
+    if (which === 'low') lo = midi; else hi = midi;
+    if (hi <= lo) { setStatus('最高音要比最低音高才可以哦～'); return; }
+    S.rangePreset = 'custom';
+    $('rangeSel').value = 'custom';
+    toggleCustomRow();
+    applyRange(lo, hi, 'custom');
+  }
+
+  function applyRange(lo, hi, presetId) {
+    S.rangeLow = lo; S.rangeHigh = hi;
+    if (presetId) S.rangePreset = presetId;
+    toggleCustomRow();
+    $('rangeLowSel').value = lo;
+    $('rangeHighSel').value = hi;
+    saveSettings();
+    buildLadder(); buildRefTable(); buildPracticeSelect();
+    renderRangeInfo();
+    drawChart(currentChartTrack());
+    if (S.current) updateReadout(S.current);
+  }
+
+  function renderRangeInfo() {
+    var lo = PT.describeMidi(S.rangeLow, S.a4, S.useFlat);
+    var hi = PT.describeMidi(S.rangeHigh, S.a4, S.useFlat);
+    var semis = S.rangeHigh - S.rangeLow;
+    var doFreq = num(PT.midiToFreq((S.ladderOctave + 1) * 12, S.a4), 1);
+    $('rangeInfo').innerHTML =
+      '你的音域：<b>' + lo.solfege + lo.octave + '</b> ' + num(lo.freq, 1) + ' Hz ~ <b>' + hi.solfege + hi.octave + '</b> ' +
+      num(hi.freq, 1) + ' Hz · 共 ' + semis + ' 个半音（' + (semis / 12).toFixed(1) + ' 个八度）· ' +
+      '音域内的音是正常颜色，<b>灰掉</b>的在音域外。<br>' +
+      '建议练声音阶：从 <b>do' + S.ladderOctave + '（' + doFreq + ' Hz）</b> 起，一级一级往上练，' +
+      '先别一上来就冲 <b>' + hi.solfege + hi.octave + '</b>（那是你的天花板，练久了容易累）。';
+  }
+
   function buildLadder() {
     var notes = PT.scaleNotes(S.ladderOctave, S.a4, S.useFlat);
     var box = $('ladder');
@@ -356,8 +694,11 @@
       b.type = 'button';
       b.className = 'lad';
       b.dataset.midi = n.midi;
-      b.title = '播放 ' + n.solfege + ' 的标准音（' + num(n.freq, 2) + ' Hz）';
-      b.innerHTML = '<b>' + n.solfege + '</b><span>' + n.letter + n.octave + '</span><em>' + num(n.freq, 1) + ' Hz</em>';
+      var out = isOutOfRange(n.midi);
+      if (out) b.classList.add('out');
+      b.title = (out ? '⚠️ 超出你的音域：' : '播放 ') + n.solfege + ' 的标准音（' + num(n.freq, 2) + ' Hz）';
+      b.innerHTML = '<b>' + n.solfege + '</b><span>' + n.letter + n.octave + '</span><em>' + num(n.freq, 1) + ' Hz</em>' +
+                    (out ? '<i class="out-tag">音域外</i>' : '');
       b.addEventListener('click', function () {
         playTone(n.freq, 1.2);
         b.classList.add('flash');
@@ -375,6 +716,7 @@
     notes.forEach(function (n) {
       var tr = document.createElement('tr');
       tr.dataset.midi = n.midi;
+      if (isOutOfRange(n.midi)) tr.classList.add('out');
       var td1 = document.createElement('td');
       td1.innerHTML = '<b>' + n.solfege + '</b>';
       var td2 = document.createElement('td');
@@ -401,7 +743,7 @@
     PT.scaleNotes(S.ladderOctave, S.a4, S.useFlat).forEach(function (n) {
       var op = document.createElement('option');
       op.value = n.midi;
-      op.textContent = n.solfege + n.octave + '  (' + num(n.freq, 2) + ' Hz)';
+      op.textContent = n.solfege + n.octave + '  (' + num(n.freq, 2) + ' Hz)' + (isOutOfRange(n.midi) ? '  ⚠️音域外' : '');
       sel.appendChild(op);
     });
     if (keep && sel.querySelector('option[value="' + keep + '"]')) sel.value = keep;
@@ -413,6 +755,7 @@
     S.a4 = v;
     buildLadder(); buildRefTable(); buildPracticeSelect();
     if (S.current) updateReadout(S.current);
+    renderRangeInfo();
     renderStats(S.track.length ? computeStats(S.track) : null);
     drawChart(currentChartTrack());
   }
@@ -658,7 +1001,10 @@
     var mids = pts.map(function (p) { return p.midi; });
     var lo = Math.floor(Math.min.apply(null, mids)) - 1;
     var hi = Math.ceil(Math.max.apply(null, mids)) + 1;
-    if (hi - lo > 30) { hi = lo + 30; }
+    /* 把「我的音域」也纳入纵轴，方便对照有没有唱出界 */
+    if (isFinite(S.rangeLow) && S.rangeLow - 1 < lo) lo = S.rangeLow - 1;
+    if (isFinite(S.rangeHigh) && S.rangeHigh + 1 > hi) hi = S.rangeHigh + 1;
+    if (hi - lo > 32) { hi = lo + 32; }
 
     function X(t) { return padL + (t / tMax) * plotW; }
     function Y(m) { return padT + (hi - m) / (hi - lo) * plotH; }
@@ -675,6 +1021,30 @@
       ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + plotW, y); ctx.stroke();
       ctx.fillStyle = major ? '#93a1c0' : '#4d5c7c';
       ctx.fillText(info.solfege + info.octave, padL - 6, y);
+    }
+
+    /* 音域带（浅蓝底 + 上下限虚线） */
+    if (isFinite(S.rangeLow) && isFinite(S.rangeHigh)) {
+      var bandHi = Y(Math.min(hi, S.rangeHigh + 0.5));
+      var bandLo = Y(Math.max(lo, S.rangeLow - 0.5));
+      if (bandLo > bandHi) {
+        ctx.fillStyle = 'rgba(96,165,250,.10)';
+        ctx.fillRect(padL, bandHi, plotW, bandLo - bandHi);
+      }
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = 'rgba(96,165,250,.6)';
+      ctx.beginPath(); ctx.moveTo(padL, Y(S.rangeHigh)); ctx.lineTo(padL + plotW, Y(S.rangeHigh)); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(padL, Y(S.rangeLow)); ctx.lineTo(padL + plotW, Y(S.rangeLow)); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(147,197,253,.9)';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('音域上限 ' + PT.midiToName(S.rangeHigh), padL + 5, Y(S.rangeHigh) - 2);
+      ctx.textBaseline = 'top';
+      ctx.fillText('音域下限 ' + PT.midiToName(S.rangeLow), padL + 5, Y(S.rangeLow) + 2);
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'right';
     }
 
     /* 纵向时间线 */

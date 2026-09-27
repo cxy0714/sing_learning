@@ -225,3 +225,18 @@ tr.on td { background: rgba(74,222,128,.14); }
   .readouts { grid-template-columns: 1fr; }
   .ladder { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* ===== 音域相关 ===== */
+.range-info { margin-top: -4px; line-height: 1.55; }
+.range-custom { margin: -2px 0 8px; }
+.lad.out { opacity: .42; }
+.lad.out:hover { opacity: .8; }
+.out-tag { font-size: 10px; color: var(--bad); font-style: normal; line-height: 1.2; }
+tr.out td { opacity: .42; }
+
+/* ===== 实时音高曲线 / 声波 ===== */
+.live-block { margin-top: 16px; }
+.live-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 13.5px; }
+.live-title { font-weight: 600; color: #cfe0ff; }
+.live-chart { width: 100%; height: 210px; display: block; border-radius: 10px; background: #0c1322; border: 1px solid var(--line); }
+.scope { width: 100%; height: 56px; display: block; margin-top: 8px; border-radius: 10px; background: #0c1322; border: 1px solid var(--line); }
+.scope.hidden { display: none; }
