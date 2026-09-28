@@ -59,6 +59,7 @@
   /* ---------- 录音 ---------- */
   var stream = null, mr = null, chunks = [], lastBlob = null;
   var onStatus = function () {};
+  var prefsReady = null;
   var S = { dir: null, auto: true };        // 保存文件夹 + 是否自动保存
 
   function loadPrefs() {
@@ -332,15 +333,41 @@
   }
 
   function byId(id) { return all().then(function (l) { return l.filter(function (r) { return r.id === id; })[0]; }); }
+  function findSavedWebm(r) {
+    if (!S.dir || !S.dir.entries) return Promise.resolve(null);
+    var prefix = 'karaoke-' + safe(r.song) + '-';
+    return new Promise(function (resolve) {
+      var it = S.dir.entries(), best = null, bestName = '';
+      function step() {
+        it.next().then(function (res) {
+          if (res.done) return resolve(best);
+          var name = res.value[0], entry = res.value[1];
+          if (entry.kind === 'file' && name.indexOf(prefix) === 0 && /\.webm$/i.test(name) && (!bestName || name > bestName)) {
+            best = entry; bestName = name;
+          }
+          step();
+        }, function () { resolve(best); });
+      }
+      step();
+    }).then(function (entry) {
+      return entry ? entry.getFile().catch(function () { return null; }) : null;
+    }).catch(function () { return null; });
+  }
   function getRecordAudio(r) {
     if (r.audio) return Promise.resolve(r.audio);
-    if (!r.savedTo || !S.dir) return Promise.resolve(null);
-    return hasPermission().then(function (ok) {
-      if (!ok) return null;
-      return S.dir.getFileHandle(r.savedTo + '.webm').then(function (fh) {
-        return fh.getFile();
+    return (prefsReady || Promise.resolve()).then(function () {
+      if (!S.dir) return null;
+      return hasPermission().then(function (ok) {
+        if (!ok) return null;
+        var first = r.savedTo ? S.dir.getFileHandle(r.savedTo + '.webm').then(function (fh) {
+          return fh.getFile();
+        }).catch(function () { return null; }) : Promise.resolve(null);
+        return first.then(function (file) {
+          if (file) return file;
+          return findSavedWebm(r);
+        });
       }).catch(function () { return null; });
-    }).catch(function () { return null; });
+    });
   }
 
   /* ---------- 混合回放：录音 + 伴奏 / 原唱 ---------- */
@@ -352,7 +379,7 @@
     onStatus(msg || '');
   }
   function stopMix() {
-    if (mixTimer) { clearTimeout(mixTimer); mixTimer = null; }
+    if (mixTimer) { clearInterval(mixTimer); mixTimer = null; }
     mixPlayers.forEach(function (a) {
       try { a.pause(); } catch (e) {}
       try { if (a._url) URL.revokeObjectURL(a._url); } catch (e) {}
@@ -404,6 +431,7 @@
     if (box._url) URL.revokeObjectURL(box._url);
     box._url = URL.createObjectURL(audio);
     box.src = box._url;
+    box.ontimeupdate = function () { if (window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(box.currentTime * 1000); };
     var p = box.play();
     if (p && p.catch) p.catch(function () {});
     setPlayStatus(msg || ('🎧 正在回放：' + (r.song || '') + '（' + fmtTime(r.createdAt) + '）'));
@@ -433,6 +461,8 @@
       ? (hasOriginalStem ? '伴奏 + 原唱（原唱声音更大）' : '完整版（原唱 + 伴奏）')
       : (hasAccomp ? '我的录音 + 伴奏' : '我的录音 + 完整版（可能带原唱）');
     setPlayStatus('🎧 正在回放：' + (r.song || '') + ' · ' + label + '（再点一次停止）');
+    if (mixTimer) clearInterval(mixTimer);
+    mixTimer = setInterval(function () { if (players[0] && window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(players[0].currentTime * 1000); }, 100);
     Promise.all(players.map(whenReady)).then(function () {
       return Promise.all(players.map(function (a) {
         var p = a.play();
@@ -457,6 +487,7 @@
           pauseDryPlayer(); stopMix(); setPlayStatus('已停止回放。'); return;
         }
         stopMix();
+        if (window.KaraokeAPI && KaraokeAPI.showRecord) KaraokeAPI.showRecord(r, null);
         var SL = window.SongLibrary;
         if (!SL || !SL.findSong) { playDry(r, audio, '曲库模块还没准备好，先只回放你的录音。'); return; }
         var ready = SL.ensureReady ? SL.ensureReady() : Promise.resolve(!!SL.findSong(r));
@@ -465,6 +496,7 @@
           var song = SL.findSong(r);
           if (!song) { playDry(r, audio, '曲库里找不到这条记录对应的歌，先只回放你的录音。'); return; }
           SL.getTracks(song).then(function (files) {
+            if (window.KaraokeAPI && KaraokeAPI.showRecord) KaraokeAPI.showRecord(r, files.lrc);
             playMixed(r, audio, song, files, mode);
           }).catch(function (e) {
             playDry(r, audio, '伴奏读取失败，先只回放你的录音：' + (e && e.message ? e.message : e));
@@ -479,7 +511,7 @@
   }
 
   function wire() {
-    loadPrefs();
+    prefsReady = loadPrefs();
     var box = $('recList');
     if (box) {
       box.addEventListener('click', function (e) {

@@ -1328,11 +1328,75 @@
   }
 
   /* 给曲库（js/library.js）用的接口 */
+  /** 练习记录回放：把记录里的音高点和歌词映射回②的图 */
+  function showRecord(rec, lrcFile) {
+    if (!rec) return;
+    S.karaAxis = null;
+    S.mode = 'record';
+    S.freeRec = false;
+    S.songPos = 0;
+    S.audioName = rec.song || '';
+    S.refSourceName = rec.refSource || null;
+    S.refShiftOct = 0;
+    S.a4 = (rec.a4 >= 415 && rec.a4 <= 466) ? rec.a4 : S.a4;
+    S.totalMs = rec.durationMs || 0;
+
+    var pts = rec.points || [];
+    var track = [];
+    S.samples = [];
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      if (!p || p.length < 2 || !isFinite(p[1]) || p[1] <= 0) continue;
+      S.samples.push({ t: p[0], f: p[1] });
+      if (p.length >= 4 && p[3] !== null && p[3] !== undefined && isFinite(p[2]) && isFinite(p[3])) {
+        var target = p[2] - p[3] / 100;
+        track.push({
+          t: p[0], f: PT.midiToFreq(target, S.a4), midi: target,
+          q: target, detected: true, gap: false, conf: 1, rms: 0.01
+        });
+      }
+    }
+    S.refTrack = track;
+    S.refSegs = null;
+    S.notes = [];
+    S.result = null;
+    if (track.length) {
+      var last = track[track.length - 1].t;
+      if (last > S.totalMs) S.totalMs = last;
+    }
+
+    if (lrcFile) {
+      readTextSmart(lrcFile).then(function (txt) {
+        S.lrc = parseLRC(txt);
+        resetLyricsIndex();
+        updateLyrics(0);
+      });
+    } else {
+      S.lrc = null;
+      resetLyricsIndex();
+      updateLyrics(-1);
+    }
+    drawKara();
+    updateHUD();
+    setStatus('🎧 回放记录：<b>' + (rec.song || '') + '</b> · ' + (track.length ? '标准线由当时的评分目标还原' : '只有你的音高线'));
+  }
+
+  /** 回放进度同步到②的图/歌词 */
+  function syncPlayback(ms) {
+    if (S.mode !== 'record') return;
+    S.songPos = Math.max(0, ms || 0);
+    if (S.totalMs && S.songPos > S.totalMs) S.songPos = S.totalMs;
+    updateLyrics(S.songPos);
+    drawKara();
+    updateHUD();
+  }
   window.KaraokeAPI = {
     load: loadAudioFile,
     status: setStatus,
     state: S,
-    getRange: function () { return vocalRange(); }
+    getRange: function () { return vocalRange(); },
+    showRecord: showRecord,
+    syncPlayback: syncPlayback
   };
 
   /* 启动 */

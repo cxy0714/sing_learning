@@ -418,13 +418,14 @@
     return entry.getFile().catch(function () { return null; });
   }
   function getTracks(song) {
-    if (!song) return Promise.resolve({ audio: null, vocals: null, accomp: null });
+    if (!song) return Promise.resolve({ audio: null, vocals: null, accomp: null, lrc: null });
     return Promise.all([
       getTrackFile(song.audio),
       getTrackFile(song.vocals),
-      getTrackFile(song.accomp)
+      getTrackFile(song.accomp),
+      getTrackFile(song.lrc)
     ]).then(function (files) {
-      return { audio: files[0], vocals: files[1], accomp: files[2] };
+      return { audio: files[0], vocals: files[1], accomp: files[2], lrc: files[3] };
     });
   }
   function ensureReady() {
