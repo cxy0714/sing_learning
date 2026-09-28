@@ -59,6 +59,82 @@
   /* ---------- 录音 ---------- */
   var stream = null, mr = null, chunks = [], lastBlob = null;
   var onStatus = function () {};
+  var S = { dir: null, auto: true };        // 保存文件夹 + 是否自动保存
+
+  function loadPrefs() {
+    try { S.auto = localStorage.getItem('vpm.recAuto') !== '0'; } catch (e) { S.auto = true; }
+    return kvGet('recDir').then(function (h) { if (h) S.dir = h; renderFolder(); updateUsage(); })
+      .catch(function () { renderFolder(); updateUsage(); });
+  }
+  function renderFolder() {
+    var el = $('recFolderName');
+    if (el) el.textContent = S.dir ? ('保存文件夹：' + S.dir.name) : '还没设保存文件夹 —— 设一个，唱完直接写你硬盘，不占浏览器空间';
+    var chk = $('recAutoChk'); if (chk) chk.checked = S.auto;
+    var b = $('recFolderBtn');
+    if (b) b.textContent = S.dir ? '📁 更换文件夹' : '📁 选择保存文件夹';
+  }
+  function setFolder() {
+    if (!window.showDirectoryPicker) { onStatus('这个浏览器不能直接写文件夹（用 Chrome/Edge），可以先用「JSON」按钮下载。'); return; }
+    window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+      S.dir = h;
+      return kvPut('recDir', h).then(function () {
+        renderFolder(); updateUsage();
+        onStatus('✅ 保存文件夹已设为 <b>' + h.name + '</b>：以后唱完自动把 <code>karaoke-*.json</code> + 录音 <code>.webm</code> 写进去。');
+      });
+    }).catch(function (e) { if (e && e.name !== 'AbortError') onStatus('设置文件夹失败：' + (e.message || e)); });
+  }
+  function hasPermission() {
+    if (!S.dir) return Promise.resolve(false);
+    if (!S.dir.queryPermission) return Promise.resolve(true);
+    return S.dir.queryPermission({ mode: 'readwrite' }).then(function (st) {
+      if (st === 'granted') return true;
+      return S.dir.requestPermission({ mode: 'readwrite' }).then(function (st2) { return st2 === 'granted'; });
+    }).catch(function () { return false; });
+  }
+  function writeRecToDir(rec) {
+    var base = 'karaoke-' + safe(rec.song) + '-' + stamp();
+    return writeFile(S.dir, base + '.json', JSON.stringify(exportObj(rec), null, 1)).then(function () {
+      if (rec.audio) return writeFile(S.dir, base + '.webm', rec.audio);
+    }).then(function () { return base; });
+  }
+  /* 浏览器里只留"最近一条"录音（够回听），已存盘的早就不留了 */
+  function pruneAudio() {
+    return all().then(function (list) {
+      list.sort(function (a, b) { return String(b.createdAt).localeCompare(String(a.createdAt)); });
+      var kept = 0, tasks = [];
+      list.forEach(function (r) {
+        if (!r.audio) return;
+        if (r.savedTo || kept >= 1) { delete r.audio; tasks.push(put(r)); return; }
+        kept++;
+      });
+      return Promise.all(tasks);
+    });
+  }
+  function updateUsage() {
+    var el = $('recUsage'); if (!el) return;
+    all().then(function (list) {
+      var bytes = 0;
+      list.forEach(function (r) {
+        if (r.audio) bytes += r.audio.size || 0;
+        bytes += JSON.stringify(r.points || []).length;
+      });
+      var msg = '浏览器里 ' + list.length + ' 条记录 · 数据占用 ≈ ' + (bytes / 1048576).toFixed(1) + ' MB';
+      if (navigator.storage && navigator.storage.estimate) {
+        navigator.storage.estimate().then(function (e) {
+          el.innerHTML = msg + '（浏览器总配额已用 ' + ((e.usage || 0) / 1048576).toFixed(1) + ' MB）';
+        }).catch(function () { el.textContent = msg; });
+      } else el.textContent = msg;
+    }).catch(function () {});
+  }
+  function purgeAudio() {
+    all().then(function (list) {
+      var tasks = list.map(function (r) { if (r.audio) { delete r.audio; return put(r); } });
+      return Promise.all(tasks).then(function () {
+        render(); updateUsage();
+        onStatus('🧹 已清掉浏览器里的录音（硬盘文件夹里的文件没动）。');
+      });
+    }).catch(function () {});
+  }
 
   function attach(s) { stream = s; }
 
@@ -114,7 +190,27 @@
       points: data.points || [],
       audio: data.audio || null
     };
-    return put(rec).then(function () { render(); return rec; });
+    if (S.dir && S.auto) {
+      return hasPermission().then(function (ok) {
+        if (!ok) {
+          return put(rec).then(function () {
+            render(); pruneAudio().then(updateUsage);
+            onStatus('⚠️ 文件夹权限失效，这条先存在浏览器里（点「📁 更换文件夹」重新授权）。');
+            return rec;
+          });
+        }
+        return writeRecToDir(rec).then(function (base) {
+          rec.savedTo = base;   // 已写进你硬盘；浏览器里由 pruneAudio 只保留最近一条的音频
+          return put(rec).then(function () {
+            render(); pruneAudio().then(updateUsage);
+            onStatus('💾 已自动存到文件夹：<code>' + base + '.json</code>' + (data.audio ? ' + <code>' + base + '.webm</code>（你的录音）' : '') +
+                     '。浏览器里只留音高数据，不占空间。');
+            return rec;
+          });
+        });
+      }).catch(function () { return put(rec).then(function () { render(); updateUsage(); return rec; }); });
+    }
+    return put(rec).then(function () { render(); pruneAudio().then(updateUsage); return rec; });
   }
 
   function exportObj(rec) {
@@ -156,41 +252,37 @@
   }
   function pickDir() {
     return window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+      S.dir = h;
       kvPut('recDir', h);
+      renderFolder();
       return h;
     });
   }
+  /** 手动把某条记录写进文件夹（优先用已设好的文件夹，没设就让你选一次） */
   function saveToFolder(rec) {
     var base = 'karaoke-' + safe(rec.song) + '-' + stamp();
     var json = JSON.stringify(exportObj(rec), null, 1);
-    var write = function (dir) {
-      return writeFile(dir, base + '.json', json).then(function () {
-        if (rec.audio) return writeFile(dir, base + '.webm', rec.audio);
-      }).then(function () {
-        onStatus('✅ 已存到文件夹：' + base + '.json' + (rec.audio ? ' + ' + base + '.webm（你的录音）' : '') +
-                 ' —— 把这个 json 发我就能逐音分析。');
+    var doWrite = function () {
+      return writeRecToDir(rec).then(function (b) {
+        rec.savedTo = b;
+        return put(rec).then(function () {
+          render(); pruneAudio().then(updateUsage);
+          onStatus('✅ 已存到文件夹：<code>' + b + '.json</code>（录音 .webm 一起写了）。');
+        });
       });
     };
     if (!window.showDirectoryPicker) {
       download(base + '.json', json, 'application/json');
       if (rec.audio) downloadBlob(base + '.webm', rec.audio);
-      onStatus('这个浏览器不能直接写文件夹，已改为下载两个文件：' + base + '.json / .webm');
+      onStatus('这个浏览器不能直接写文件夹，已改成下载：' + base + '.json' + (rec.audio ? ' / .webm' : ''));
       return;
     }
-    kvGet('recDir').then(function (h) {
-      if (!h) return pickDir();
-      if (h.queryPermission) {
-        return h.queryPermission({ mode: 'readwrite' }).then(function (st) {
-          if (st === 'granted') return h;
-          return h.requestPermission({ mode: 'readwrite' }).then(function (st2) {
-            return st2 === 'granted' ? h : pickDir();
-          });
-        });
-      }
-      return h;
-    }).then(write).catch(function (e) {
-      if (e && e.name !== 'AbortError') onStatus('保存失败：' + (e.message || e));
+    var ready = hasPermission().then(function (ok) {
+      if (ok) return true;
+      return pickDir().then(function () { return hasPermission(); });
     });
+    ready.then(function (ok) { if (ok) return doWrite(); else onStatus('没拿到文件夹权限，保存取消。'); })
+      .catch(function (e) { if (e && e.name !== 'AbortError') onStatus('保存失败：' + (e.message || e)); });
   }
 
   /* ---------- 列表渲染 ---------- */
@@ -204,7 +296,7 @@
         var cls = r.total === null ? '' : (r.total >= 85 ? 'good' : r.total >= 60 ? 'warn' : 'bad');
         return '<div class="rec-item">' +
           '<div class="rec-main"><b>' + (r.song || '(无名)') + '</b>' +
-          '<span class="muted small">' + fmtTime(r.createdAt) + ' · 唱到 ' + r.sungCount + '/' + r.totalNotes +
+          '<span class="muted small">' + fmtTime(r.createdAt) + (r.savedTo ? ' · 💾已存盘' : '') + ' · 唱到 ' + r.sungCount + '/' + r.totalNotes +
           ' 段 · 平均|偏差| ' + (r.avgAbs === null ? '—' : r.avgAbs) + ' 音分</span></div>' +
           '<div class="rec-score ' + cls + '">' + sc + '<i>分</i></div>' +
           '<div class="row">' +
@@ -215,6 +307,7 @@
           '</div></div>';
       }).join('');
       box._cache = list;
+      updateUsage();
     }).catch(function () {
       box.innerHTML = '<p class="muted small">（浏览器不支持本地记录存储）</p>';
     });
@@ -252,6 +345,17 @@
         else if (act === 'del') del(id).then(render);
       });
     }
+    var fb = $('recFolderBtn');
+    if (fb) fb.addEventListener('click', setFolder);
+    var ac = $('recAutoChk');
+    if (ac) ac.addEventListener('change', function () {
+      S.auto = this.checked;
+      try { localStorage.setItem('vpm.recAuto', S.auto ? '1' : '0'); } catch (e) {}
+      onStatus(S.auto && S.dir ? ('以后唱完会自动写进 ' + S.dir.name) : '已关闭自动保存（录音会留在浏览器里，可用「🧹 清理」删掉）');
+    });
+    var pg = $('recPurgeBtn');
+    if (pg) pg.addEventListener('click', purgeAudio);
+    updateUsage();
     var pb = $('playRecBtn');
     if (pb) pb.addEventListener('click', function () {
       all().then(function (l) {

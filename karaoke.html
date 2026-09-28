@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>K歌练习 · 跟唱打分 · 音高线对比</title>
 <meta name="description" content="网页 K 歌练习：显示歌曲的标准音高线和你唱的线，实时打分，录音可导出分析。纯前端，不上传任何声音。" />
-<link rel="stylesheet" href="style.css?v=4" />
-<link rel="stylesheet" href="karaoke.css?v=4" />
+<link rel="stylesheet" href="style.css?v=5" />
+<link rel="stylesheet" href="karaoke.css?v=5" />
 </head>
 <body>
 
@@ -111,7 +111,20 @@
       </table>
     </div>
     <p id="resultHint" class="muted small"></p>
-    <h3 style="margin-top:18px">📁 练习记录（留在你自己浏览器里，<b>不上传、不进仓库</b>）</h3>
+    <h3 style="margin-top:18px">📁 练习记录</h3>
+    <div class="row wrap rec-prefs">
+      <button id="recFolderBtn" class="btn btn-primary btn-sm">📁 选择保存文件夹</button>
+      <label class="field checkbox"><input id="recAutoChk" type="checkbox" checked /> 唱完自动存进该文件夹（录音直接写硬盘，不占浏览器）</label>
+      <button id="recPurgeBtn" class="btn btn-ghost btn-sm">🧹 清理浏览器里的录音</button>
+      <span id="recFolderName" class="muted small">还没设保存文件夹</span>
+      <span id="recUsage" class="muted small"></span>
+    </div>
+    <p class="muted small">
+      建议设成 <code>C:\CloudMusic\recordings</code> 这样的目录：唱完自动生成
+      <code>karaoke-歌名-时间.json</code>（音高数据+成绩）和 <code>.webm</code>（你自己的录音）。
+      浏览器里只留最近一条录音（够回听），**不会占用大量空间**；
+      这些文件都在你的硬盘上，<b>不会上传、也永远不会进 GitHub 仓库</b>。
+    </p>
     <div id="recList" class="rec-list"><p class="muted small">还没有练习记录。唱一段并停下，这里会自动留下你的成绩和录音（可回听）。</p></div>
     <p class="muted small">想把某一段发我分析：点 <b>💾 保存这一段到文件夹</b>（写到你选的文件夹，比如 <code>C:\CloudMusic\recordings</code>），
       然后把 <code>karaoke-*.json</code>（和 <code>.webm</code> 录音）发我。</p>
@@ -181,10 +194,10 @@
   </div>
 </footer>
 
-<script src="js/pitch.js?v=4"></script>
-<script src="js/karaoke.js?v=4"></script>
-<script src="js/library.js?v=4"></script>
-<script src="js/record.js?v=4"></script>
+<script src="js/pitch.js?v=5"></script>
+<script src="js/karaoke.js?v=5"></script>
+<script src="js/library.js?v=5"></script>
+<script src="js/record.js?v=5"></script>
 <script>
   /* 兜底提示：如果曲库模块没加载成功（浏览器缓存了旧版本 / 网络问题），
      直接明确告诉用户，而不是"点了没反应"。 */
