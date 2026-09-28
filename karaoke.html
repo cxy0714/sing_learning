@@ -20,10 +20,36 @@
 
 <main class="wrap grid">
 
+  <!-- ===== 我的曲库 ===== -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>① 我的曲库（选本地歌曲）</h2>
+      <div class="row wrap">
+        <button id="libPickDir" class="btn btn-primary">📁 选择音乐文件夹（授权一次）</button>
+        <button id="libPickFiles" class="btn btn-ghost btn-sm">兼容模式：选文件夹</button>
+        <input type="file" id="libFiles" webkitdirectory directory multiple class="hidden-file" />
+        <button id="libRescan" class="btn btn-ghost btn-sm" disabled>🔄 重新扫描</button>
+      </div>
+    </div>
+    <p class="muted small">
+      浏览器不允许网页自己扫硬盘，所以要你<b>授权一次</b>：Chrome / Edge 会记住授权（下次点一下就恢复），
+      其它浏览器用「兼容模式」选一次文件夹。之后就能<b>按歌手、歌名搜索，点一下直接唱</b>。
+      文件始终只在你本机被读取，<b>不上传任何地方</b>。
+    </p>
+    <div class="row wrap">
+      <input id="libSearch" class="lib-search" type="search" placeholder="搜索歌手或歌名（中文；空格分隔多个词，例如「周华健 难念」）…" />
+      <select id="libArtist" class="mini-select"></select>
+      <label class="field checkbox"><input id="libVocals" type="checkbox" checked /> 优先用人声分离版（线更准）</label>
+    </div>
+    <div id="libInfo" class="muted small">还没授权文件夹。</div>
+    <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
+  </section>
+
+
   <!-- ===== 音高线对比 ===== -->
   <section class="card card--wide">
     <div class="card-head">
-      <h2>① 歌的标准音高线 vs 你唱的线</h2>
+      <h2>② 歌的标准音高线 vs 你唱的线</h2>
       <div class="row wrap">
         <label class="field">显示范围
           <select id="viewSel" class="mini-select">
@@ -59,7 +85,7 @@
   <!-- ===== 成绩 ===== -->
   <section class="card card--wide">
     <div class="card-head">
-      <h2>② 成绩单</h2>
+      <h2>③ 成绩单</h2>
       <div class="row">
         <button id="exportBtn" class="btn btn-ghost btn-sm">导出 JSON（给我分析）</button>
         <button id="csvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
@@ -76,40 +102,15 @@
     <p id="resultHint" class="muted small"></p>
   </section>
 
-  <!-- ===== 我的曲库 ===== -->
-  <section class="card card--wide">
-    <div class="card-head">
-      <h2>③ 我的曲库（选本地歌曲）</h2>
-      <div class="row wrap">
-        <button id="libPickDir" class="btn btn-primary">📁 选择音乐文件夹（授权一次）</button>
-        <button id="libPickFiles" class="btn btn-ghost btn-sm">兼容模式：选文件夹</button>
-        <input type="file" id="libFiles" webkitdirectory directory multiple class="hidden-file" />
-        <button id="libRescan" class="btn btn-ghost btn-sm" disabled>🔄 重新扫描</button>
-      </div>
-    </div>
-    <p class="muted small">
-      浏览器不允许网页自己扫硬盘，所以要你<b>授权一次</b>：Chrome / Edge 会记住授权（下次点一下就恢复），
-      其它浏览器用「兼容模式」选一次文件夹。之后就能<b>按歌手、歌名搜索，点一下直接唱</b>。
-      文件始终只在你本机被读取，<b>不上传任何地方</b>。
-    </p>
-    <div class="row wrap">
-      <input id="libSearch" class="lib-search" type="search" placeholder="搜索歌手或歌名（中文；空格分隔多个词，例如「周华健 难念」）…" />
-      <select id="libArtist" class="mini-select"></select>
-      <label class="field checkbox"><input id="libVocals" type="checkbox" checked /> 优先用人声分离版（线更准）</label>
-    </div>
-    <div id="libInfo" class="muted small">还没授权文件夹。</div>
-    <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
-  </section>
-
   <!-- ===== 自由练习：上传自己的音频 ===== -->  <section class="card card--wide">
     <div class="card-head"><h2>④ 播放器 / 跟唱（曲库选歌后会载入到这里）</h2></div>
-    <p id="songInfo" class="status">在③里选一首歌，或者直接选下面的本地音频文件。</p>
+    <p id="songInfo" class="status">在①里选一首歌，或者直接选下面的本地音频文件。</p>
     <p class="muted small">
       也可以不用曲库，直接选本地音乐（<b>mp3 / m4a / wav / flac</b>）。网页会做两件事：
     </p>
     <ol class="muted small" style="margin-top:-6px">
       <li><b>从音频里估出主旋律音高线</b>（伴奏里贝斯最"规整"，最容易把算法带跑，所以我默认做了
-          <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在①里给你看对不对；</li>
+          <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在②里给你看对不对；</li>
       <li>麦克风记录<b>你唱的音高线</b>，和它叠在一起，<b>就能给任意本地歌曲打分</b>了。</li>
     </ol>
     <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">

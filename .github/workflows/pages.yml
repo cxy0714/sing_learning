@@ -32,7 +32,8 @@ jobs:
         run: |
           mkdir -p site/js
           cp index.html karaoke.html style.css karaoke.css site/
-          cp js/pitch.js js/songs.js js/app.js js/karaoke.js site/js/
+          cp js/*.js site/js/
+          echo "--- 打包内容 ---"
           find site -type f | sort
 
       - name: Upload artifact

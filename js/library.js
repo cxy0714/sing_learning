@@ -319,8 +319,8 @@
       S.lastKey = s.key;
       render();
       K.load(r[0], r[1]);
-      info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>。往下拉到「自由练习」听一遍、看音高线，' +
-        '然后点「🎤 从头同步跟唱（自动对齐 · 可打分）」。');
+      info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>。先看②的音高线（在④点「▶」播放听一遍），' +
+        '再到④点「🎤 从头同步跟唱（自动对齐 · 可打分）」。');
       var card = document.getElementById('freeRecBtn');
       if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }).catch(function (e) {
