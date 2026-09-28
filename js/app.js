@@ -60,6 +60,7 @@
     rangeLow: 45,           // A2 = 110 Hz
     rangeHigh: 69,          // A4 = 440 Hz
     rangePreset: 'baritenor',
+    holdMidi: null, holdN: 0,      // 稳定音判定（连续 3 帧算"唱到了"）
     /* 录音 */
     recording: false, recStart: 0, lastPush: 0, track: [], lastStatsAt: 0,
     /* 本地记录 */
@@ -81,6 +82,7 @@
     buildPracticeSelect();
     buildShiftSelects();
     renderRangeInfo();
+    renderRangeLog();
     updateShift();
     drawLive(performance.now());
     loadSessions();
@@ -114,6 +116,21 @@
     $('songHighSel').addEventListener('change', updateShift);
     $('songLowSel').addEventListener('change', updateShift);
     $('shiftPlayBtn').addEventListener('click', playShiftTone);
+    $('rangeUseBtn').addEventListener('click', function () {
+      var log = loadRangeLog(), d = log[todayKey()];
+      if (!d || d.low === null || d.high === null) { setStatus('今天还没有记录到稳定的最低/最高音，先唱几个音。'); return; }
+      if (d.high - d.low < 6) { setStatus('今天记录到的跨度太小（' + (d.high - d.low) + ' 个半音），多唱一会儿再点。'); return; }
+      S.rangePreset = 'custom';
+      $('rangeSel').value = 'custom';
+      applyRange(d.low, d.high, 'custom');
+      setStatus('✅ 已把今天的音域 ' + PT.midiToName(d.low) + ' – ' + PT.midiToName(d.high) + ' 设为「我的音域」，K歌页会跟着用。');
+    });
+    $('rangeClearBtn').addEventListener('click', function () {
+      if (!confirm('清空所有日期的音域记录？（只影响浏览器本地记录）')) return;
+      saveRangeLog({});
+      renderRangeLog();
+      setStatus('已清空音域记录。');
+    });
     $('liveWin').addEventListener('change', function () { S.liveWin = parseInt(this.value, 10) || 10; saveSettings(); });
     $('scopeChk').addEventListener('change', function () {
       S.scopeOn = this.checked;
@@ -457,6 +474,7 @@
    * 界面：实时读数
    * ============================================================ */
   function resetReadout() {
+    S.holdMidi = null; S.holdN = 0;
     $('noteSol').textContent = '--';
     $('noteOct').textContent = '';
     $('noteLetter').textContent = '等待开始…';
@@ -502,6 +520,10 @@
 
     var note = PT.describeMidi(PT.freqToMidi(cur.freq, S.a4), S.a4, S.useFlat);
     cur.note = note;
+    /* 每日音域记录：连续 3 帧（约 0.2 秒）都停在同一个音，才算"真的唱到了" */
+    if (S.holdMidi === note.midi) S.holdN = (S.holdN || 0) + 1;
+    else { S.holdMidi = note.midi; S.holdN = 1; }
+    if (S.holdN === 3) recordRangeNote(note.midi);
 
     $('noteSol').textContent = note.solfege;
     $('noteOct').textContent = note.octave;
@@ -755,6 +777,99 @@
     playTone(PT.midiToFreq(target, S.a4), 1.3, 0.25);
     setStatus('正在播放移调后的最高音 ' + PT.midiToName(target) + '（' + num(PT.midiToFreq(target, S.a4), 1) +
               ' Hz）。等这个音你能稳稳落在实时曲线的绿色带里，这首歌降 ' + shift + ' 个半音就能拿下。');
+  }
+
+  /* ============================================================
+   * 每日音域记录
+   * ============================================================ */
+  var RANGE_KEY = 'vpm.range.v1';
+  var VOICE_TYPES = [
+    { id: 'bass',    name: '男低音 Bass',      short: '男低音', lo: 40, hi: 64, hz: 'E2–E4' },
+    { id: 'baritone',name: '男中音 Baritone',  short: '男中音', lo: 45, hi: 65, hz: 'A2–F4' },
+    { id: 'tenor',   name: '男高音 Tenor',     short: '男高音', lo: 48, hi: 72, hz: 'C3–C5' },
+    { id: 'alto',    name: '女低音 Alto',      short: '女低音', lo: 53, hi: 77, hz: 'F3–F5' },
+    { id: 'mezzo',   name: '女中音 Mezzo',     short: '女中音', lo: 57, hi: 81, hz: 'A3–A5' },
+    { id: 'soprano', name: '女高音 Soprano',   short: '女高音', lo: 60, hi: 84, hz: 'C4–C6' }
+  ];
+  function todayKey() {
+    var d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+  function loadRangeLog() {
+    try { return JSON.parse(localStorage.getItem(RANGE_KEY) || '{}'); } catch (e) { return {}; }
+  }
+  function saveRangeLog(o) {
+    try { localStorage.setItem(RANGE_KEY, JSON.stringify(o)); } catch (e) {}
+  }
+  var _rangeDirty = 0;
+  function recordRangeNote(midi) {
+    var log = loadRangeLog(), k = todayKey();
+    var d = log[k] || { low: null, high: null, notes: {} };
+    var changed = false;
+    if (d.low === null || midi < d.low) { d.low = midi; changed = true; }
+    if (d.high === null || midi > d.high) { d.high = midi; changed = true; }
+    d.notes[midi] = (d.notes[midi] || 0) + 1;
+    d.updatedAt = new Date().toISOString();
+    log[k] = d;
+    saveRangeLog(log);
+    if (changed || Date.now() - _rangeDirty > 1500) { _rangeDirty = Date.now(); renderRangeLog(); }
+  }
+  function voiceByLow(m) {
+    var best = null;
+    VOICE_TYPES.forEach(function (t) { if (!best || Math.abs(m - t.lo) < Math.abs(m - best.lo)) best = t; });
+    return best;
+  }
+  function voiceByHigh(m) {
+    var best = null;
+    VOICE_TYPES.forEach(function (t) { if (!best || Math.abs(m - t.hi) < Math.abs(m - best.hi)) best = t; });
+    return best;
+  }
+  function voiceText(low, high) {
+    var a = voiceByLow(low), b = voiceByHigh(high);
+    if (a.id === b.id) return a.name + '（' + a.hz + '）';
+    return '下限像' + a.short + '，上限像' + b.short;
+  }
+  function rangeRow(k, d) {
+    if (d.low === null || d.high === null) return '';
+    var lo = PT.describeMidi(d.low, S.a4, false), hi = PT.describeMidi(d.high, S.a4, false);
+    var semi = d.high - d.low;
+    var isToday = (k === todayKey());
+    return '<tr' + (isToday ? ' class="on"' : '') + '>' +
+      '<td>' + k + (isToday ? ' <span class="muted small">(今天)</span>' : '') + '</td>' +
+      '<td><b>' + lo.solfege + lo.octave + '</b> <span class="muted small">' + num(lo.freq, 1) + ' Hz</span></td>' +
+      '<td><b>' + hi.solfege + hi.octave + '</b> <span class="muted small">' + num(hi.freq, 1) + ' Hz</span></td>' +
+      '<td>' + semi + ' 半音 <span class="muted small">(' + (semi / 12).toFixed(1) + ' 个八度)</span></td>' +
+      '<td>' + voiceText(d.low, d.high) + '</td>' +
+      '<td><button class="btn btn-ghost btn-sm danger" data-del="' + k + '">删</button></td>' +
+      '</tr>';
+  }
+  function renderRangeLog() {
+    var body = $('rangeBody'), today = $('rangeToday');
+    if (!body) return;
+    var log = loadRangeLog();
+    var keys = Object.keys(log).sort().reverse();
+    var t = log[todayKey()];
+    if (t && t.low !== null && t.high !== null) {
+      var lo = PT.describeMidi(t.low, S.a4, false), hi = PT.describeMidi(t.high, S.a4, false);
+      var semi = t.high - t.low;
+      today.innerHTML = '📅 <b>今天（' + todayKey() + '）</b>：最低 <b>' + lo.solfege + lo.octave + '</b>（' + num(lo.freq, 1) +
+        ' Hz） · 最高 <b>' + hi.solfege + hi.octave + '</b>（' + num(hi.freq, 1) + ' Hz） · 跨度 <b>' + semi +
+        ' 半音</b>（' + (semi / 12).toFixed(1) + ' 个八度）<br>声部判断：<b>' + voiceText(t.low, t.high) + '</b>' +
+        '　<button class="btn btn-ghost btn-sm" id="rangeUseBtn2">用这个更新「我的音域」</button>';
+      var b2 = $('rangeUseBtn2');
+      if (b2) b2.addEventListener('click', function () { $('rangeUseBtn').click(); });
+    } else {
+      today.textContent = '今天还没有记录 —— 点「开始收音」，从最低能唱的音一路往上唱到最高，每个音停 0.3 秒左右。';
+    }
+    body.innerHTML = keys.length
+      ? keys.map(function (k) { return rangeRow(k, log[k]); }).join('')
+      : '<tr><td colspan="6" class="muted center">还没有记录</td></tr>';
+    body.querySelectorAll('button[data-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = b.dataset.del;
+        var lg = loadRangeLog(); delete lg[k]; saveRangeLog(lg); renderRangeLog();
+      });
+    });
   }
 
   function renderRangeInfo() {

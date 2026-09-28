@@ -221,7 +221,7 @@ sec('2. K歌提取与打分');
   const dom2 = makeDom();
   const sb2 = makeSandbox(dom2);
   load(sb2, 'js/pitch.js');
-  loadWithHook(sb2, 'js/app.js', 'window.__T={S,loop,analyze,updateReadout,computeStats,buildExport,drawChart,renderStats,applyRange,onRangePreset,isOutOfRange,startPractice,clearLive,updateShift,playShiftTone};');
+  loadWithHook(sb2, 'js/app.js', 'window.__T={S,loop,analyze,updateReadout,computeStats,buildExport,drawChart,renderStats,applyRange,onRangePreset,isOutOfRange,startPractice,clearLive,updateShift,playShiftTone,recordRangeNote,voiceText,renderRangeLog,loadRangeLog,todayKey};');
   const T = sb2.__T, SA = T.S, PT2 = sb2.PitchTool;
   chk(SA.ladderOctave === 3 && SA.rangeLow === 45 && SA.rangeHigh === 69, '默认第 3 组 + 音域 A2–A4', SA.ladderOctave + ' / ' + PT2.midiToName(SA.rangeLow) + '-' + PT2.midiToName(SA.rangeHigh));
 
@@ -268,6 +268,20 @@ sec('2. K歌提取与打分');
   T.playShiftTone(); T.drawChart(trk); T.renderStats(stt);
   chk(true, '试听/画图/统计渲染无异常');
 
+  sec('3b. 每日音域记录 + 声部判断');
+  {
+    sb2.localStorage.setItem('vpm.range.v1', '{}');
+    T.recordRangeNote(40); T.recordRangeNote(74); T.recordRangeNote(64);   // E2 / D5 / E4
+    const lg = JSON.parse(sb2.localStorage.getItem('vpm.range.v1'));
+    const day = lg[Object.keys(lg)[0]];
+    chk(day && day.low === 40 && day.high === 74, '记录每天的最低/最高音', day ? (day.low + ' ~ ' + day.high) : '无');
+    chk(T.voiceText(40, 74) === '下限像男低音，上限像男高音', 'E2–D5 → 下限像男低音、上限像男高音', T.voiceText(40, 74));
+    chk(T.voiceText(45, 69).indexOf('男中音') >= 0, 'A2–A4 → 男中音区间', T.voiceText(45, 69));
+    chk(T.voiceText(48, 72).indexOf('男高音') >= 0, 'C3–C5 → 男高音', T.voiceText(48, 72));
+    chk(T.voiceText(60, 84).indexOf('女高音') >= 0, 'C4–C6 → 女高音', T.voiceText(60, 84));
+    T.renderRangeLog();
+    chk(String(dom2.els['rangeBody']._html).indexOf('半音') >= 0, '音域表格渲染正常');
+  }
   /* ============================================================ */
   /*  4. 本地曲库（扫描 / 搜索 / 合并）                              */
   /* ============================================================ */

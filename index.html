@@ -95,7 +95,38 @@
     </div>
   </section>
 
+  <!-- ============ 每日音域记录 ============ -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>🎼 我的音域记录（每天自动记最高/最低音）</h2>
+      <div class="row wrap">
+        <button id="rangeUseBtn" class="btn btn-sm">用今天的音域更新设置</button>
+        <button id="rangeClearBtn" class="btn btn-ghost btn-sm danger">清空全部记录</button>
+      </div>
+    </div>
+    <p class="muted small">
+      开着麦克风唱就行：页面会自动记下你**唱到过的最低音和最高音**（只统计稳定唱到 ≥0.2 秒的音，避免偶尔的误判）。
+      记录只存在你浏览器本地，不上传、不进仓库。
+    </p>
+    <div id="rangeToday" class="status">还没有记录 —— 点「开始收音」唱几个音（往下探探最低、往上够够最高）。</div>
+    <div class="table-scroll">
+      <table class="stat-table">
+        <thead><tr><th>日期</th><th>最低音</th><th>最高音</th><th>跨度</th><th>声部判断</th><th></th></tr></thead>
+        <tbody id="rangeBody"><tr><td colspan="6" class="muted center">还没有记录</td></tr></tbody>
+      </table>
+    </div>
+    <details class="tip">
+      <summary>声部是怎么判断的？（口径说明）</summary>
+      <p>按常见声部的典型音域做匹配：男低音 Bass E2–E4、男中音 Baritone A2–F4、男高音 Tenor C3–C5、
+        女低音 Alto F3–F5、女中音 Mezzo A3–A5、女高音 Soprano C4–C6。</p>
+      <p>你的音域如果**下限像某个声部、上限像另一个**，就分开写 —— 比如 E2–D5 是
+        「下限像男低音、上限像男高音」，属于**很宽的男声**（Bass-Baritone 向下探、Tenor 的高度也够得到）。</p>
+    </details>
+  </section>
+
   <!-- ============ 标准频率表 ============ -->
+
+
   <section class="card">
     <div class="card-head">
       <h2>② 标准频率表（背不下来就看这里）</h2>
