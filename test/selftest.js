@@ -308,6 +308,19 @@ sec('2. K歌提取与打分');
     chk(SL.filterCatalog(cat.songs, '周华健 难念').length === 1, '多关键词搜索');
     chk(SL.filterCatalog(cat.songs, 'zzz不存在').length === 0, '搜不到就返回空');
 
+    /* 回归：只有人声版的那条 + 只有完整版的那条，合并后必须两样都有（曾丢掉主音频） */
+    const items2 = [
+      { name: '徐佳莹 - 白旗.mp3', rel: 'CloudMusic/converted/徐佳莹 - 白旗.mp3', getFile: G },
+      { name: '徐佳莹 - 白旗.vocals.mp3', rel: 'CloudMusic/vocals/徐佳莹 - 白旗.vocals.mp3', getFile: G },
+      { name: '徐佳莹 - 白旗.no_vocals.mp3', rel: 'CloudMusic/vocals/徐佳莹 - 白旗.no_vocals.mp3', getFile: G },
+      { name: '徐佳莹 - 白旗.lrc', rel: 'CloudMusic/徐佳莹 - 白旗.lrc', getFile: G }
+    ];
+    const c2 = SL.buildCatalog(items2);
+    const s2 = c2.songs[0];
+    chk(c2.songs.length === 1 && !!s2.audio && !!s2.vocals && !!s2.accomp && !!s2.lrc,
+      '一条曲目同时拿到 音频+人声版+伴奏版+歌词（合并不能丢字段）',
+      c2.songs.length + ' 条 / audio=' + (s2.audio ? '有' : '❌无') + ' vocals=' + (s2.vocals ? '有' : '❌无') +
+      ' accomp=' + (s2.accomp ? '有' : '❌无') + ' lrc=' + (s2.lrc ? '有' : '❌无'));
     /* 本机真有音乐目录时，拿真实文件名跑一遍 */
     try {
       if (fs.existsSync('C:/CloudMusic')) {

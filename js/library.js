@@ -98,10 +98,15 @@
       if (!g.vocals && s.vocals) g.vocals = s.vocals;
       if (!g.accomp && s.accomp) g.accomp = s.accomp;
       if (!g.lrc && s.lrc) { g.lrc = s.lrc; g.lrcLocal = s.lrcLocal; }
-      if (audioScore(s) > audioScore(g)) {
-        var keepLrc = g.lrc, keepLrcLocal = g.lrcLocal;
-        g.audio = s.audio; g.audioExt = s.audioExt; g.folder = s.folder; g.ext = s.ext;
-        g.lrc = keepLrc; g.lrcLocal = keepLrcLocal;
+      /* 主音频：只要对方有音频就必须补上（否则"只有人声版"的那条会把整首歌的音频丢掉） */
+      if (s.audio) {
+        if (!g.audio) {
+          g.audio = s.audio; g.audioExt = s.audioExt; g.folder = s.folder; g.ext = s.ext;
+        } else if (audioScore(s) > audioScore(g)) {
+          var keepLrc = g.lrc, keepLrcLocal = g.lrcLocal;
+          g.audio = s.audio; g.audioExt = s.audioExt; g.folder = s.folder; g.ext = s.ext;
+          g.lrc = keepLrc; g.lrcLocal = keepLrcLocal;
+        }
       }
       if (s.folder && g.sources.indexOf(s.folder) < 0) g.sources.push(s.folder);
     });
