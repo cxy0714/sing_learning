@@ -60,7 +60,7 @@
     /* 自由练习 */
     freeRec: false, audioEl: null, audioUrl: null,
     refTrack: null, refSegs: null, refShiftOct: 0,
-    lrc: null, _lyIdx: -1,
+    lrc: null, _lyIdx: -1, _lyNext: -2, _lyDots: -1,
     vocalBand: true,         // 人声带通滤波（去贝斯/镲片），默认开
     vocalPreset: 'male',     // 音高搜索范围（排除贝斯/低音提琴等伴奏声部）
     viewWin: 8,              // 音高线显示窗口（秒）；0 = 全曲总览
@@ -722,6 +722,10 @@
     });
   }
 
+  function resetLyricsIndex() {
+    S._lyIdx = -1; S._lyNext = -2; S._lyDots = -1;
+  }
+
   function updateLyrics(t) {
     var box = $('lyrics');
     if (!box) return;
@@ -730,18 +734,39 @@
       if (S._lyIdx !== -2) {
         box.innerHTML = '<span class="ly-none">🎵 这首歌没有歌词文件（.lrc）。歌词会自动配同名的 .lrc —— 放在音频旁边即可；' +
           '网易云下载的 .lrc 就是直接可用的。</span>';
-        S._lyIdx = -2;
+        S._lyIdx = -2; S._lyNext = -1; S._lyDots = -1;
       }
       return;
     }
+
     var idx = -1;
     for (var i = 0; i < S.lrc.length; i++) { if (S.lrc[i].t <= t) idx = i; else break; }
-    if (idx === S._lyIdx) return;
-    S._lyIdx = idx;
-    var from = Math.max(0, idx - 2), to = Math.min(S.lrc.length - 1, idx + 3);
+
+    var next = idx + 1 < S.lrc.length ? idx + 1 : -1;
+    var remain = next >= 0 ? (S.lrc[next].t - t) : -1;
+
+    /* 下一句进来前 3 秒开始倒计时：··· → ·· → · */
+    var dots = 0;
+    if (remain > 0 && remain <= 3000) dots = remain > 2000 ? 3 : (remain > 1000 ? 2 : 1);
+
+    if (idx === S._lyIdx && next === S._lyNext && dots === S._lyDots) return;
+    S._lyIdx = idx; S._lyNext = next; S._lyDots = dots;
+
+    var from = Math.max(0, idx - 2);
+    var to = Math.min(S.lrc.length - 1, idx + 4);
     var html = '';
     for (var k = from; k <= to; k++) {
-      html += '<div class="ly-line' + (k === idx ? ' ly-on' : '') + '">' + (S.lrc[k].text || '♪') + '</div>';
+      var line = S.lrc[k];
+      var cls = 'ly-line';
+      if (k < idx) cls += ' ly-pass';
+      if (k === idx) cls += ' ly-on';
+      if (k === next) cls += ' ly-next';
+      var body = line.text || '♪';
+      if (k === next) {
+        body = '<span class="ly-tag">下一句</span>' + body;
+        if (dots) body += '<span class="ly-dots">' + new Array(dots + 1).join('·') + '</span>';
+      }
+      html += '<div class="' + cls + '">' + body + '</div>';
     }
     box.innerHTML = html;
   }
@@ -784,13 +809,13 @@
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
         S.lrc = parseLRC(txt);
-        S._lyIdx = -1;
+        resetLyricsIndex();
         updateLyrics(-1);
         setStatus('📄 已配歌词 <b>' + lrcFile.name + '</b>（' + S.lrc.length + ' 行）'
           + (S.lrc.length ? '' : '：这个文件里没有时间标签，可能是个纯音乐。'));
       });
     } else {
-      S.lrc = null; S._lyIdx = -2;
+      S.lrc = null; S._lyIdx = -2; S._lyNext = -1; S._lyDots = -1;
       var ly = $('lyrics');
       if (ly) {
         ly.innerHTML = '<span class="ly-none">🎵 这首歌没找到同名的 .lrc 歌词文件 —— ' +
@@ -872,7 +897,7 @@
     });
     $('freeRecBtn').addEventListener('click', toggleFreeRec);
     $('syncRecBtn').addEventListener('click', syncSing);
-    $('lrcChk').addEventListener('change', function () { S._lyIdx = -1; updateLyrics(S.songPos > -9000 ? S.songPos : 0); });
+    $('lrcChk').addEventListener('change', function () { resetLyricsIndex(); updateLyrics(S.songPos > -9000 ? S.songPos : 0); });
     $('vocalSel').addEventListener('change', function () {
       S.vocalPreset = this.value;
       saveSettings();
@@ -1236,7 +1261,7 @@
       $('syncRecBtn').classList.add('recording');
       $('freeRecBtn').disabled = true;
       $('freeResult').innerHTML = '🎤 正在同步跟唱：歌在放，同时记录你的音高。<b>戴耳机！</b>';
-      S._lyIdx = -1;
+      resetLyricsIndex();
       updateLyrics(0);
       setStatus('🎤 开始唱了！随时可以停（再点一次按钮），只按你唱到的部分算分。基准 = 从音频估出来的旋律线。');
       var cv = $('karaChart');
@@ -1253,7 +1278,7 @@
     $('freeRecBtn').disabled = false;
     $('freeRecBtn').textContent = '⏺ 只记录我的音高';
     try { if (S.audioEl && !S.audioEl.paused) S.audioEl.pause(); } catch (e) {}
-    S._lyIdx = -1;
+    resetLyricsIndex();
     /* 先把录音停掉，再一起存成一条练习记录（音高数据 + 成绩 + 你的声音） */
     var finish = function (blob) {
       if (S.refSegs && S.refSegs.length && S.samples.length) {

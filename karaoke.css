@@ -57,8 +57,12 @@
   border-radius: 10px; padding: 10px 14px; text-align: center; line-height: 1.9;
 }
 .lyrics .ly-none { color: #64748b; font-size: 13.5px; }
-.ly-line { font-size: 15px; color: #5c6c8d; transition: color .15s; }
+.ly-line { font-size: 15px; color: #5c6c8d; transition: color .15s, opacity .15s; }
+.ly-line.ly-pass { opacity: .45; }
+.ly-line.ly-next { color: #93c5fd; font-size: 16px; font-weight: 700; }
 .ly-line.ly-on { font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 0 18px rgba(96,165,250,.45); }
+.ly-tag { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #a7f3d0; border: 1px solid rgba(74,222,128,.55); background: rgba(74,222,128,.12); vertical-align: 2px; }
+.ly-dots { display: inline-block; margin-left: 10px; min-width: 1.2em; letter-spacing: 3px; color: #4ade80; font-weight: 800; }
 /* ===== 本地曲库 ===== */
 .hidden-file { display: none; }
 .lib-search {

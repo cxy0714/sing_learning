@@ -210,7 +210,14 @@ sec('2. K歌提取与打分');
   sec('2d. 歌词解析');
   const lrc = K.parseLRC('[00:01.50]第一行\n[00:03.00]第二行\n[00:05.25]第三行');
   chk(lrc.length === 3 && lrc[0].t === 1500 && lrc[2].t === 5250, 'LRC 时间标签解析正确', JSON.stringify(lrc.map(l => l.t)));
-  S.lrc = lrc; S._lyIdx = -1; dom.els['lrcChk'].checked = true;
+  S.lrc = lrc; S._lyIdx = -1; S._lyNext = -2; S._lyDots = -1; dom.els['lrcChk'].checked = true;
+  K.updateLyrics(0);
+  const hPreview = String(dom.els['lyrics']._html);
+  chk(hPreview.indexOf('ly-next') >= 0 && hPreview.indexOf('下一句') >= 0 && hPreview.indexOf('第一行') >= 0,
+    '第一句开始前有「下一句」预告');
+  chk(hPreview.indexOf('ly-dots">··') >= 0, '距离下一句 2 秒时显示两个倒计时点');
+  K.updateLyrics(500);
+  chk(String(dom.els['lyrics']._html).indexOf('ly-dots">·') >= 0, '倒计时圆点逐渐减少');
   K.updateLyrics(3200);
   chk(String(dom.els['lyrics']._html).indexOf('ly-on') >= 0 && String(dom.els['lyrics']._html).indexOf('第二行') >= 0, '歌词按时间高亮正确');
 

@@ -186,7 +186,7 @@ python -m venv "$env:USERPROFILE\.demucs-env"
    Node 工具与测试可以使用现代 JS。
 3. **中文界面与中文注释**：现有 UI、报错、README 均为中文，保持一致。
 4. **不要破坏测试可访问性**：核心纯函数（音高、曲库解析、打分、统计）应保持可在 Node vm 中加载。
-5. **缓存版本号**：`index.html` / `karaoke.html` 的 JS/CSS 带 `?v=7`。改完静态资源后同步提升版本号，
+5. **缓存版本号**：`index.html` / `karaoke.html` 的 JS/CSS 带 `?v=8`。改完静态资源后同步提升版本号，
    否则用户浏览器会缓存旧文件；新增站点 JS 要同时更新两个页面的 `<script>` 和 Pages workflow 的 `cp` 步骤。
 6. **Pages 打包名单**：`.github/workflows/pages.yml` 显式 `cp` 网站文件；新增前端资源时要同步更新该步骤。
 7. **`.ncm` 工具注意许可证**：算法/常量来自 MIT 的 `taurusxin/ncmdump`，不要移除 `tools/LICENSE-upstream-ncmdump.txt`。
@@ -195,10 +195,11 @@ python -m venv "$env:USERPROFILE\.demucs-env"
 ## 6. 当前工作区状态（2026-09-28）
 
 - 新增 `js/record-folder.js`：统一记录文件夹，音域记录和 K 歌记录共用一个持久化授权文件夹。
-- `index.html`：新增「📁 选择记录文件夹」按钮；「保存音域记录」写到统一文件夹；静态资源版本提升到 `?v=7`。
-- `karaoke.html`：引入 `record-folder.js`，同步使用「记录文件夹」措辞，静态资源版本提升到 `?v=7`。
+- `index.html`：新增「📁 选择记录文件夹」按钮；「保存音域记录」写到统一文件夹；静态资源版本提升到 `?v=8`。
+- `karaoke.html`：引入 `record-folder.js`，同步使用「记录文件夹」措辞，静态资源版本提升到 `?v=8`。
 - `js/app.js`：接入 `RecordFolder`；修复音域 hold 逻辑里 `cur.midi` 未赋值导致稳定音无法记录的问题。
 - `js/record.js`：页面启动时恢复上次记录文件夹；选择/更换文件夹走统一模块。
 - `README.md`：补充统一记录文件夹和新的文件结构。
 - `karaoke.html` / `js/library.js` / `karaoke.css`：新增「🎙 只看有人声分离版」过滤按钮，只有带 `.vocals.mp3` 的歌曲会显示。
-- `test/selftest.js`：新增统一记录文件夹接口测试、人声分离版过滤测试；当前 `node test/selftest.js` 全部通过（71 项）。
+- `js/karaoke.js` / `karaoke.css`：歌词新增「下一句」预告和最后 3 秒 `···` → `··` → `·` 倒计时。
+- `test/selftest.js`：新增统一记录文件夹接口测试、人声分离版过滤测试、歌词预告测试；当前 `node test/selftest.js` 全部通过（74 项）。
