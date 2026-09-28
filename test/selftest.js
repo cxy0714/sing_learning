@@ -91,7 +91,7 @@ function makeAudio(sr, notes, amp) {
 sec('1. 音高检测与音名换算');
 {
   const sb = makeSandbox(makeDom());
-  load(sb, 'js/pitch.js'); load(sb, 'js/songs.js');
+  load(sb, 'js/pitch.js');
   const PT = sb.PitchTool;
   let worst = 0;
   [65.41, 98.0, 130.81, 261.63, 392.0, 440.0, 493.88, 523.25, 880.0, 1046.5].forEach(f => {
@@ -111,13 +111,7 @@ sec('1. 音高检测与音名换算');
   chk(PT.midiFromName('A2') === 45 && PT.midiFromName('A4') === 69 && PT.midiFromName('Bb2') === 46, '音名→MIDI（含降号）正确');
   chk(PT.midiToName(45) === 'A2' && PT.midiToName(69) === 'A4', 'MIDI→音名正确');
   chk(PT.midiToName(60.0002) === 'C4' && PT.midiToName(72.4) === 'C5', '小数 MIDI 也能正确取整命名（曾返回 NaN）');
-  chk(sb.SONG_LIB.length >= 7, '曲库条目数 ≥ 7', sb.SONG_LIB.length);
-  let bad = null;
-  sb.SONG_LIB.forEach(s => s.melody.trim().split(/\s+/).forEach(tk => {
-    const nm = tk.split(':')[0];
-    if (nm !== 'R' && PT.midiFromName(nm) === null) bad = s.title + ':' + nm;
-  }));
-  chk(!bad, '曲库全部音名合法', bad || '');
+  chk(true, '（内置曲目已移除）');
 }
 
 /* ============================================================ */
@@ -127,18 +121,11 @@ sec('2. K歌提取与打分');
 (async () => {
   const dom = makeDom();
   const sb = makeSandbox(dom);
-  load(sb, 'js/pitch.js'); load(sb, 'js/songs.js');
-  loadWithHook(sb, 'js/karaoke.js', 'window.__K={S,extractReference,buildRefSegs,scoreVsRef,foldCents,viterbiPath,selectSong,scoreAll,renderResult,buildExport,drawKara,updateHUD,parseLRC,updateLyrics,applyTranspose,autoFit,karaWindow};');
+  load(sb, 'js/pitch.js');
+  loadWithHook(sb, 'js/karaoke.js', 'window.__K={S,extractReference,buildRefSegs,scoreVsRef,foldCents,viterbiPath,renderResult,buildExport,drawKara,updateHUD,parseLRC,updateLyrics,karaWindow,refTargetAt};');
   const K = sb.__K, S = K.S, PT = sb.PitchTool;
 
-  chk(dom.els['songSel'].children.length >= 7, 'K歌页曲库下拉已填充', dom.els['songSel'].children.length);
-  K.selectSong('twinkle', false);
-  chk(S.notes.length === 42 && Math.abs(S.totalMs - 28800) < 300, '小星星 42 音 / 28.8 秒', S.notes.length + ' 音 ' + (S.totalMs / 1000).toFixed(1) + 's');
-  const fits = ['scale', 'arp', 'twinkle', 'frog', 'joy', 'jingle', 'birthday'].every(id => {
-    K.selectSong(id, false);
-    return S.sungMin >= S.rangeLow && S.sungMax <= S.rangeHigh;
-  });
-  chk(fits, '7 首曲目自动移调后全部落在 A2–A4 内');
+  chk(true, '（只保留本地歌曲模式：目标线来自音频提取）');
 
   sec('2b. 从合成音频提取旋律（do re mi sol la）');
   const ab = makeAudio(44100, [[261.63, .55], [293.66, .55], [329.63, .55], [392, .55], [440, .55]]);
@@ -154,6 +141,22 @@ sec('2. K歌提取与打分');
   chk(segs.length === 5, '切成 5 个音符片段', segs.length);
   chk(segs.every(s => s.midi >= 60 && s.midi <= 69), '片段音高正确', segs.map(s => PT.midiToName(s.midi)).join(','));
 
+  /* ---- 前奏是纯伴奏/静音时，不应该画出音高线（用户反馈的问题）---- */
+  {
+    const sr2 = 22050, n2 = sr2 * 3;
+    const d2 = new Float32Array(n2);
+    for (let i = Math.floor(sr2 * 1.5); i < n2; i++) {          // 前 1.5 秒静音，之后 330Hz
+      const env = Math.min(1, (i - sr2 * 1.5) / 400) * Math.min(1, (n2 - i) / 400);
+      d2[i] = 0.35 * env * Math.sin(2 * Math.PI * 330 * i / sr2);
+    }
+    const ab2 = { sampleRate: sr2, length: n2, numberOfChannels: 1, duration: 3, getChannelData: () => d2 };
+    const t2 = await K.extractReference(ab2, null);
+    const seg2 = K.buildRefSegs(t2);
+    chk(seg2.length === 1 && seg2[0].startMs > 1350, '前奏静音段不出线（只在人声处才有音符）',
+      seg2.length + ' 段，首段起点 ' + (seg2.length ? Math.round(seg2[0].startMs) : '-') + 'ms');
+    chk(t2.filter(p => p.gap).length > 15, '静音帧被标成 gap（线断开，不画绿色）',
+      t2.filter(p => p.gap).length + '/' + t2.length + ' 帧');
+  }
   sec('2c. 打分（含八度对齐）');
   S.refTrack = track; S.refSegs = segs; S.refShiftOct = 0;
   function sing(oct, detune) {
@@ -170,8 +173,8 @@ sec('2. K歌提取与打分');
   chk(r.total === 0 && r.sungCount === 0, '没唱 → 0 分');
   sing(-12, 0); K.scoreVsRef();
   const ex = K.buildExport();
-  const nTargets = S.notes.filter(n => n.midi !== null).length;
-  chk(ex.targets.length === nTargets && ex.points.length > 0, '导出含目标线 + 原始轨迹', ex.targets.length + ' 目标 / ' + ex.points.length + ' 采样');
+  chk(ex.targets.length === (S.refSegs || []).length && ex.points.length > 0, '导出含目标线 + 原始轨迹', ex.targets.length + ' 目标 / ' + ex.points.length + ' 采样');
+  chk(ex.points[0].centsVsTarget !== null && ex.points[0].centsVsTarget !== undefined, '每个采样点带上「相对目标旋律」的偏差', ex.points[0].centsVsTarget);
   sing(-12, 0); K.scoreVsRef(); K.renderResult(); K.drawKara(); K.updateHUD();
   chk(dom.calls.stroke > 0 && String(dom.els['resultBody']._html).indexOf('note-pill') >= 0, '成绩单与图形渲染正常');
   chk(K.foldCents(1200) === 0 && Math.abs(K.foldCents(1250) - 50) < 0.01, '音分八度折叠正确');
@@ -194,8 +197,8 @@ sec('2. K歌提取与打分');
     chk(Math.round(k6.t0) === 0, '起拍阶段（位置为负）显示开头', JSON.stringify(k6));
 
     /* 缩放效果：局部模式的纵轴跨度应该明显更小（音高细节被放大） */
-    K.selectSong('twinkle', false);
-    S.playing = true; S.mode = 'sing'; S.samples = []; S.songPos = 14000;
+    S.notes = []; S.refTrack = track; S.refSegs = segs; S.mode = 'free';
+    S.samples = []; S.songPos = 1200;
     S.viewWin = 0; S.karaAxis = null; K.drawKara();
     const spanFull = S.karaAxis.hi - S.karaAxis.lo;
     S.viewWin = 4; S.karaAxis = null; K.drawKara();

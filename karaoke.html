@@ -20,51 +20,10 @@
 
 <main class="wrap grid">
 
-  <!-- ===== 选歌与设置 ===== -->
-  <section class="card card--wide">
-    <div class="card-head">
-      <h2>① 选歌与设置</h2>
-      <span id="rangeBadge" class="muted small"></span>
-    </div>
-
-    <div class="row wrap">
-      <label class="field">选歌 <select id="songSel" class="mini-select wide"></select></label>
-      <button id="demoBtn" class="btn btn-ghost">▶ 先听一遍</button>
-      <button id="startBtn" class="btn btn-primary">🎤 开始跟唱打分</button>
-      <button id="stopBtn" class="btn" disabled>⏹ 停止</button>
-    </div>
-
-    <div class="row wrap">
-      <label class="field">速度
-        <select id="speedSel" class="mini-select">
-          <option value="0.6">0.6x 慢练</option>
-          <option value="0.8">0.8x</option>
-          <option value="1" selected>1.0x 原速</option>
-          <option value="1.15">1.15x</option>
-        </select>
-      </label>
-      <span class="field">移调
-        <button id="trDown" class="btn btn-ghost btn-sm">−</button>
-        <b id="trVal" class="tr-val">0</b>
-        <button id="trUp" class="btn btn-ghost btn-sm">+</button>
-        半音
-      </span>
-      <button id="autoTrBtn" class="btn btn-ghost btn-sm">🎯 自动适配我的音域</button>
-      <label class="field checkbox"><input id="guideChk" type="checkbox" checked /> 播放引导旋律</label>
-      <label class="field checkbox"><input id="metroChk" type="checkbox" checked /> 节拍器</label>
-    </div>
-
-    <p id="songInfo" class="status"></p>
-    <p class="muted small">
-      ⚠️ 用音箱放引导旋律时，麦克风会把引导音也当成"你唱的"。
-      <b>要打分就戴耳机</b>；不戴耳机就把「播放引导旋律」取消、只留节拍器（跟着节拍自己唱）。
-    </p>
-  </section>
-
   <!-- ===== 音高线对比 ===== -->
   <section class="card card--wide">
     <div class="card-head">
-      <h2>② 歌的标准音高线 vs 你唱的线</h2>
+      <h2>① 歌的标准音高线 vs 你唱的线</h2>
       <div class="row wrap">
         <label class="field">显示范围
           <select id="viewSel" class="mini-select">
@@ -100,7 +59,7 @@
   <!-- ===== 成绩 ===== -->
   <section class="card card--wide">
     <div class="card-head">
-      <h2>③ 成绩单</h2>
+      <h2>② 成绩单</h2>
       <div class="row">
         <button id="exportBtn" class="btn btn-ghost btn-sm">导出 JSON（给我分析）</button>
         <button id="csvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
@@ -120,7 +79,7 @@
   <!-- ===== 我的曲库 ===== -->
   <section class="card card--wide">
     <div class="card-head">
-      <h2>④ 我的曲库（扫描本地音乐文件夹）</h2>
+      <h2>③ 我的曲库（选本地歌曲）</h2>
       <div class="row wrap">
         <button id="libPickDir" class="btn btn-primary">📁 选择音乐文件夹（授权一次）</button>
         <button id="libPickFiles" class="btn btn-ghost btn-sm">兼容模式：选文件夹</button>
@@ -136,20 +95,21 @@
     <div class="row wrap">
       <input id="libSearch" class="lib-search" type="search" placeholder="搜索歌手或歌名（中文；空格分隔多个词，例如「周华健 难念」）…" />
       <select id="libArtist" class="mini-select"></select>
-      <label class="field checkbox"><input id="libVocals" type="checkbox" /> 优先用人声分离版（线更准）</label>
+      <label class="field checkbox"><input id="libVocals" type="checkbox" checked /> 优先用人声分离版（线更准）</label>
     </div>
     <div id="libInfo" class="muted small">还没授权文件夹。</div>
     <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
   </section>
 
   <!-- ===== 自由练习：上传自己的音频 ===== -->  <section class="card card--wide">
-    <div class="card-head"><h2>⑤ 播放器 / 跟唱（曲库选歌后会载入到这里）</h2></div>
+    <div class="card-head"><h2>④ 播放器 / 跟唱（曲库选歌后会载入到这里）</h2></div>
+    <p id="songInfo" class="status">在③里选一首歌，或者直接选下面的本地音频文件。</p>
     <p class="muted small">
-      想练的歌不在上面？把你的本地音乐（<b>mp3 / m4a / wav / flac</b>）选进来。网页会做两件事：
+      也可以不用曲库，直接选本地音乐（<b>mp3 / m4a / wav / flac</b>）。网页会做两件事：
     </p>
     <ol class="muted small" style="margin-top:-6px">
       <li><b>从音频里估出主旋律音高线</b>（伴奏里贝斯最"规整"，最容易把算法带跑，所以我默认做了
-          <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在②里给你看对不对；</li>
+          <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在①里给你看对不对；</li>
       <li>麦克风记录<b>你唱的音高线</b>，和它叠在一起，<b>就能给任意本地歌曲打分</b>了。</li>
     </ol>
     <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
@@ -226,7 +186,6 @@
 </footer>
 
 <script src="js/pitch.js"></script>
-<script src="js/songs.js"></script>
 <script src="js/karaoke.js"></script>
 <script src="js/library.js"></script>
 </body>

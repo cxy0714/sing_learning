@@ -49,7 +49,7 @@ const sb = { console, Math, JSON, Date, Array, Object, Number, String, Boolean, 
   localStorage: { getItem: () => null, setItem() {} }, performance: { now: () => Date.now() }, requestAnimationFrame: () => 0, addEventListener: () => {},
   alert: () => {}, confirm: () => true, FileReader: function () {}, Blob: function () {}, URL: { createObjectURL: () => '', revokeObjectURL() {} }, window: null };
 sb.window = sb; sb.self = sb; sb.globalThis = sb; vm.createContext(sb);
-for (const f of ['js/pitch.js', 'js/songs.js']) vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sb, { filename: f });
+for (const f of ['js/pitch.js']) vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sb, { filename: f });
 let src = fs.readFileSync(path.join(ROOT, 'js/karaoke.js'), 'utf8');
 const hook = '\nwindow.__K={S,extractReference,buildRefSegs,vocalRange};\n';
 const i = src.lastIndexOf('})();'); src = src.slice(0, i) + hook + src.slice(i);

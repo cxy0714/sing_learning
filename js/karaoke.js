@@ -9,8 +9,7 @@
   'use strict';
 
   var PT = window.PitchTool;
-  var LIB = window.SONG_LIB || [];
-  if (!PT || !LIB.length) { alert('pitch.js / songs.js 没加载成功'); return; }
+  if (!PT) { alert('pitch.js 没加载成功'); return; }
 
   /* ---------- 小工具 ---------- */
   function $(id) { return document.getElementById(id); }
@@ -29,7 +28,7 @@
     return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' +
            pad2(d.getHours()) + pad2(d.getMinutes()) + pad2(d.getSeconds());
   }
-  function setStatus(m) { $('songInfo').innerHTML = m; }
+  function setStatus(m) { var el = $('songInfo'); if (el) el.innerHTML = m; }
   function scoreClass(s) { return s >= 85 ? 'ok' : (s >= 60 ? 'warn' : 'bad'); }
 
   var LS_SET = 'vpm.settings.v1';
@@ -48,11 +47,11 @@
     ctx: null, stream: null, micSource: null, analyser: null, buf: null, running: false,
     /* 设置 */
     a4: 440, rangeLow: 45, rangeHigh: 69,
-    transpose: 0, speed: 1, guide: true, metro: true,
-    /* 歌 */
-    song: null, notes: [], totalMs: 0, sungMin: 0, sungMax: 0,
+    /* 歌：目标线来自"从音频里估出来的旋律"（S.refTrack / S.refSegs）*/
+    notes: [], totalMs: 0,
+    audioName: '', usedVocalsStem: false,
     /* 播放 */
-    playing: false, mode: '', aT0: 0, t0Perf: 0, endAtPerf: 0, oscs: [], songPos: -9999,
+    mode: '', t0Perf: 0, songPos: -9999,
     /* 采集 */
     samples: [], pitchHist: [], current: null, level: 0,
     lastAnalysis: 0, lastDraw: 0,
@@ -73,15 +72,12 @@
    * ============================================================ */
   function init() {
     loadSettings();
-    buildSongList();
     buildVocalSelect();
     bindEvents();
-    selectSong(LIB[0].id, true);
-    updateRangeBadge();
     drawKara();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setStatus('这个浏览器不支持麦克风，或者页面不是 https / localhost。请用 Chrome / Edge / Safari。');
-      $('startBtn').disabled = true;
+      var sb2 = $('syncRecBtn'); if (sb2) sb2.disabled = true;
     }
   }
 
@@ -95,35 +91,21 @@
     } catch (e) {}
     try {
       var k = JSON.parse(localStorage.getItem(LS_KARA) || '{}');
-      if (typeof k.speed === 'number' && k.speed > 0.3 && k.speed < 2) S.speed = k.speed;
-      if (typeof k.guide === 'boolean') S.guide = k.guide;
-      if (typeof k.metro === 'boolean') S.metro = k.metro;
-      if (typeof k.transpose === 'number') S.transpose = k.transpose;
+
       if (typeof k.vocalBand === 'boolean') S.vocalBand = k.vocalBand;
       if (k.vocalPreset) S.vocalPreset = k.vocalPreset;
       if (typeof k.viewWin === 'number') S.viewWin = k.viewWin;
     } catch (e) {}
-    $('speedSel').value = String(S.speed);
-    $('guideChk').checked = S.guide;
-    $('metroChk').checked = S.metro;
+
   }
 
   function saveSettings() {
     try {
       localStorage.setItem(LS_KARA, JSON.stringify({
-        speed: S.speed, guide: S.guide, metro: S.metro, transpose: S.transpose,
         vocalBand: S.vocalBand, vocalPreset: S.vocalPreset, viewWin: S.viewWin
       }));
     } catch (e) {}
   }
-
-  function updateRangeBadge() {
-    var lo = PT.describeMidi(S.rangeLow, S.a4, S.useFlat !== undefined ? S.useFlat : false);
-    var hi = PT.describeMidi(S.rangeHigh, S.a4, false);
-    $('rangeBadge').innerHTML = '我的音域：<b>' + lo.solfege + lo.octave + '</b> ' + num(lo.freq, 1) + ' Hz ~ <b>' +
-      hi.solfege + hi.octave + '</b> ' + num(hi.freq, 1) + ' Hz （在主页①里改）';
-  }
-
   function buildVocalSelect() {
     var sel = $('vocalSel');
     sel.innerHTML = '';
@@ -139,128 +121,15 @@
     if (vs) vs.value = String(S.viewWin);
   }
 
-  function buildSongList() {
-    var sel = $('songSel');
-    sel.innerHTML = '';
-    LIB.forEach(function (s) {
-      var op = document.createElement('option');
-      op.value = s.id;
-      op.textContent = s.title + '（' + s.tag + '）';
-      sel.appendChild(op);
-    });
-  }
 
   /* ============================================================
    * 选歌 / 时间轴 / 移调
    * ============================================================ */
-  function selectSong(id, keepTranspose) {
-    var song = null;
-    LIB.forEach(function (s) { if (s.id === id) song = s; });
-    if (!song) song = LIB[0];
-    S.song = song;
-    $('songSel').value = song.id;
-    S.notes = parseMelody(song.melody);
-    S.totalMs = S.notes.length ? S.notes[S.notes.length - 1].endMs : 0;
-    S.karaAxis = null;
-    if (!keepTranspose) {
-      autoFit();
-    } else {
-      applyTranspose();
-    }
-    updateSongInfo();
-    drawKara();
-    updateHUD();
-  }
 
-  function parseMelody(str) {
-    var toks = String(str).trim().split(/\s+/);
-    var t = 0, out = [];
-    toks.forEach(function (tok) {
-      var p = tok.split(':');
-      var name = p[0];
-      var beats = p.length > 1 ? parseFloat(p[1]) : 1;
-      var spb = 60 / (S.song ? S.song.bpm : 100) / S.speed;   // 秒/拍
-      var dur = beats * spb * 1000;
-      if (name !== 'R' && dur > 60) {
-        var id = PT.midiFromName(name);
-        out.push({
-          name: name, beats: beats, startMs: t, endMs: t + dur,
-          midi0: id, midi: id, durMs: dur
-        });
-      } else if (name === 'R' && dur > 30) {
-        out.push({ name: 'R', beats: beats, startMs: t, endMs: t + dur, midi0: null, midi: null, durMs: dur });
-      }
-      t += dur;
-    });
-    return out;
-  }
 
-  function rebuildTimeline() {          // 改速度后重新算时间
-    var song = S.song;
-    S.notes = parseMelody(song.melody);
-    S.totalMs = S.notes.length ? S.notes[S.notes.length - 1].endMs : 0;
-    S.karaAxis = null;
-    applyTranspose();
-    updateSongInfo();
-    drawKara();
-  }
 
-  function applyTranspose() {
-    var lo = Infinity, hi = -Infinity;
-    S.notes.forEach(function (n) {
-      if (n.midi0 === null) { n.midi = null; return; }
-      n.midi = n.midi0 + S.transpose;
-      if (n.midi < lo) lo = n.midi;
-      if (n.midi > hi) hi = n.midi;
-      n.sol = PT.describeMidi(n.midi, S.a4, false).solfege;
-      n.freq = PT.midiToFreq(n.midi, S.a4);
-    });
-    S.sungMin = isFinite(lo) ? lo : 0;
-    S.sungMax = isFinite(hi) ? hi : 0;
-    $('trVal').textContent = (S.transpose > 0 ? '+' : '') + S.transpose;
-    updateSongInfo();
-  }
 
-  /** 自动挑一个移调量：优先整八度（保住原调），再看能否塞进音域，最后看离原调近不近 */
-  function autoFit() {
-    var lo = Infinity, hi = -Infinity;
-    S.notes.forEach(function (n) {
-      if (n.midi0 === null) return;
-      if (n.midi0 < lo) lo = n.midi0;
-      if (n.midi0 > hi) hi = n.midi0;
-    });
-    if (!isFinite(lo)) { S.transpose = 0; applyTranspose(); return null; }
-    var best = null;
-    for (var s = -24; s <= 12; s++) {
-      var a = lo + s, b = hi + s;
-      var overflow = Math.max(0, S.rangeLow - a) + Math.max(0, b - S.rangeHigh);
-      var cand = { s: s, overflow: overflow, octave: (s % 12 === 0) ? 0 : 1, dist: Math.abs(s) };
-      if (!best) { best = cand; continue; }
-      if (cand.overflow !== best.overflow) { if (cand.overflow < best.overflow) best = cand; continue; }
-      if (cand.octave !== best.octave) { if (cand.octave < best.octave) best = cand; continue; }
-      if (cand.dist < best.dist) best = cand;
-    }
-    S.transpose = best.s;
-    applyTranspose();
-    saveSettings();
-    return best;
-  }
 
-  function updateSongInfo() {
-    if (!S.song) return;
-    var loTxt = S.sungMin ? PT.describeMidi(S.sungMin, S.a4, false) : null;
-    var hiTxt = S.sungMax ? PT.describeMidi(S.sungMax, S.a4, false) : null;
-    var outOf = (S.sungMin < S.rangeLow || S.sungMax > S.rangeHigh);
-    var secs = (S.totalMs / 1000).toFixed(1);
-    setStatus(
-      '<b>' + S.song.title + '</b> · ' + S.song.bpm + ' BPM · 约 ' + secs + ' 秒 · 移调 <b>' +
-      (S.transpose > 0 ? '+' : '') + S.transpose + '</b> 个半音 · 唱到的音域 <b>' +
-      (loTxt ? loTxt.solfege + loTxt.octave + ' ~ ' + hiTxt.solfege + hiTxt.octave : '—') + '</b>（' +
-      (isFinite(S.sungMin) && S.sungMin ? num(PT.midiToFreq(S.sungMin, S.a4), 0) + '~' + num(PT.midiToFreq(S.sungMax, S.a4), 0) + ' Hz' : '—') + '）' +
-      '<br>' + (S.song.tip || '') +
-      (outOf ? '<br>⚠️ 这个调超出了你的音域，点「🎯 自动适配我的音域」。' : '')
-    );
-  }
 
   /* ============================================================
    * 音频：合成引导旋律 / 节拍器
@@ -273,72 +142,8 @@
     return S.ctx;
   }
 
-  function scheduleTone(ctx, freq, t0, dur, vol, type) {
-    var osc = ctx.createOscillator(), g = ctx.createGain();
-    osc.type = type || 'triangle';
-    osc.frequency.setValueAtTime(freq, t0);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(vol, t0 + 0.03);
-    g.gain.setValueAtTime(vol, t0 + Math.max(0.06, dur - 0.09));
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(g);
-    g.connect(ctx.destination);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.05);
-    return osc;
-  }
 
-  function stopAudio() {
-    S.oscs.forEach(function (o) { try { o.stop(); } catch (e) {} });
-    S.oscs = [];
-    S.playing = false;
-    $('startBtn').disabled = false;
-    $('demoBtn').disabled = false;
-    $('stopBtn').disabled = true;
-  }
 
-  function playSequence(mode) {
-    stopAudio();
-    var ctx = ensureCtx();
-    if (ctx.state === 'suspended') ctx.resume();
-    var spb = 60 / (S.song.bpm * S.speed);
-    var leadIn = mode === 'sing' ? (S.metro ? Math.max(2.0, spb * 4) : 1.2) : 0.6;
-    var aT0 = ctx.currentTime + leadIn;
-    S.aT0 = aT0;
-    S.t0Perf = performance.now() + leadIn * 1000;
-    S.mode = mode;
-    S.playing = true;
-    S.songPos = -leadIn * 1000;
-    if (mode === 'sing') { S.samples = []; S.pitchHist = []; S.result = null; renderResult(); }
-
-    /* 引导旋律 */
-    if (S.guide) {
-      S.notes.forEach(function (n) {
-        if (n.midi === null) return;
-        var f = PT.midiToFreq(n.midi, S.a4);
-        var t0 = aT0 + n.startMs / 1000 + 0.02;
-        var dur = Math.max(0.14, n.durMs / 1000 - 0.07);
-        S.oscs.push(scheduleTone(ctx, f, t0, dur, 0.15, 'triangle'));
-      });
-    }
-    /* 节拍器 + 起拍 */
-    if (S.metro) {
-      var nBeats = Math.floor(S.totalMs / (spb * 1000)) + 1;
-      for (var b = 0; b < nBeats; b++) {
-        S.oscs.push(scheduleTone(ctx, b % 4 === 0 ? 1600 : 1050, aT0 + b * spb, 0.05, 0.09, 'square'));
-      }
-      for (var k = 0; k < 4; k++) {
-        S.oscs.push(scheduleTone(ctx, k === 3 ? 1600 : 1050, aT0 - (4 - k) * spb, 0.05, 0.09, 'square'));
-      }
-    }
-    S.endAtPerf = S.t0Perf + S.totalMs + 350;
-    $('startBtn').disabled = true;
-    $('demoBtn').disabled = true;
-    $('stopBtn').disabled = false;
-    setStatus(mode === 'sing'
-      ? (S.metro ? '🎤 数 4 拍就开始唱！' : '🎤 准备…开始唱！')
-      : '▶ 正在播放标准旋律，先听一遍。');
-  }
 
   /* ============================================================
    * 麦克风 & 分析
@@ -383,13 +188,7 @@
     if (ts - S.lastAnalysis >= 60) { S.lastAnalysis = ts; analyze(ts); }
 
     var now = performance.now();
-    if (S.playing) {
-      S.songPos = now - S.t0Perf;
-      if (now > S.endAtPerf) {
-        if (S.mode === 'sing') { finishSing(); }
-        else { stopAudio(); S.songPos = S.totalMs; setStatus('播放完了，点「🎤 开始跟唱打分」换你来唱。'); }
-      }
-    } else if (S.freeRec) {
+    if (S.freeRec) {
       if (S.audioEl && !S.audioEl.paused) {
         var aMs = S.audioEl.currentTime * 1000;
         var pMs = now - S.t0Perf;
@@ -437,40 +236,17 @@
     S.current = cur;
 
     /* 采点：跟唱模式 / 自由模式才记录 */
-    if (cur && (S.mode === 'sing' && S.playing || S.freeRec)) {
+    if (cur && S.freeRec) {
       var t = ts - S.t0Perf;
       S.samples.push({ t: t, f: +cur.freq.toFixed(2) });
       if (S.samples.length > 20000) S.samples.splice(0, 4000);
     }
   }
 
-  function finishSing() {
-    stopAudio();
-    S.songPos = S.totalMs;
-    scoreAll();
-    renderResult();
-    drawKara();
-    updateHUD();
-    setStatus(scoreMsg());
-  }
 
-  function scoreMsg() {
-    if (!S.result) return '';
-    var r = S.result;
-    if (!r.sungCount) return '😅 这一遍没采到多少声音：靠近麦克风、或者先把「播放引导旋律」关掉只留节拍器试试。';
-    return '✅ 唱完了：总分 <b>' + r.total + '</b>，平均偏差 ' + num(r.avgAbs, 1) + ' 音分，命中 ' + r.sungCount + '/' + r.rows.length + ' 个音。'
-      + ' 分最低的是 <b>' + r.worst.name + '</b>（' + num(r.worst.cents, 0) + ' 音分），回去单独练它。';
-  }
   /* ============================================================
    * 画图：歌的标准音高线 + 你唱的线
    * ============================================================ */
-  function targetAt(t) {
-    for (var i = 0; i < S.notes.length; i++) {
-      var n = S.notes[i];
-      if (t >= n.startMs && t < n.endMs) return n;
-    }
-    return null;
-  }
 
   /** 计算「跟随滚动」要显示的时间窗：播放头固定在窗口约 1/3 处，且窗口不越界。
    *  viewWin <= 0 → 全曲总览；歌曲比窗口短 → 显示全长。 */
@@ -641,7 +417,7 @@
       if (s.t > m1) { prev = null; continue; }
       var x = X(s.t), y = Y(PT.freqToMidi(s.f, S.a4));
       var color = '#60a5fa';
-      var tg = targetAt(s.t);
+      var tg = refTargetAt(s.t);
       if (tg && tg.midi !== null) {
         var off = Math.abs((PT.freqToMidi(s.f, S.a4) - tg.midi) * 100);
         color = off <= 25 ? '#4ade80' : (off <= 50 ? '#fbbf24' : '#f87171');
@@ -689,13 +465,13 @@
   }
   /* ---------- 实时提示 ---------- */
   function updateHUD() {
-    var tg = S.playing ? targetAt(S.songPos) : null;
+    var tg = refTargetAt(S.songPos);
     if (tg && tg.midi !== null) {
       var ti = PT.describeMidi(tg.midi, S.a4, false);
       $('hudTarget').innerHTML = ti.solfege + ti.octave + ' <small>' + num(PT.midiToFreq(tg.midi, S.a4), 1) + 'Hz</small>';
     } else if (tg && tg.midi === null) {
       $('hudTarget').innerHTML = '<small>休止 / 换气</small>';
-    } else if (S.playing) {
+    } else if (S.freeRec) {
       $('hudTarget').innerHTML = '<small>准备…</small>';
     } else {
       $('hudTarget').textContent = '--';
@@ -760,41 +536,6 @@
     };
   }
 
-  function scoreAll() {
-    var rows = [];
-    S.notes.forEach(function (n, i) {
-      if (n.midi === null) return;
-      var r = noteScore(S.samples, n);
-      var ni = PT.describeMidi(n.midi, S.a4, false);
-      rows.push({
-        index: rows.length + 1,
-        name: n.name,
-        targetSol: ni.solfege + ni.octave,
-        targetMidi: n.midi,
-        targetFreq: PT.midiToFreq(n.midi, S.a4),
-        startMs: n.startMs, endMs: n.endMs,
-        medMidi: r ? r.med : null,
-        cents: r ? r.cents : null,
-        samples: r ? r.samples : 0,
-        score: r ? r.score : 0
-      });
-    });
-    var sung = rows.filter(function (r) { return r.cents !== null; });
-    var total = rows.length ? Math.round(mean(rows.map(function (r) { return r.score; }))) : 0;
-    var worst = null;
-    rows.forEach(function (r) { if (!worst || r.score < worst.score) worst = r; });
-    S.result = {
-      rows: rows,
-      total: total,
-      sungCount: sung.length,
-      coverage: rows.length ? sung.length / rows.length * 100 : 0,
-      avgAbs: sung.length ? mean(sung.map(function (r) { return Math.abs(r.cents); })) : 0,
-      bias: sung.length ? mean(sung.map(function (r) { return r.cents; })) : 0,
-      in50: sung.length ? sung.filter(function (r) { return Math.abs(r.cents) <= 50; }).length / sung.length * 100 : 0,
-      worst: worst
-    };
-    return S.result;
-  }
 
   function renderResult() {
     var r = S.result;
@@ -842,46 +583,65 @@
   /* ============================================================
    * 导出
    * ============================================================ */
+  /** 取某一时刻的目标音高（来自"从音频里估出的旋律线"）——给演唱着色、算偏差用 */
+  function refTargetAt(t) {
+    if (!S.refTrack || !S.refTrack.length) return null;
+    var a = S.refTrack, lo = 0, hi = a.length - 1;
+    while (lo < hi) { var mid = (lo + hi) >> 1; if (a[mid].t < t) lo = mid + 1; else hi = mid; }
+    var best = null, bd = 1e9;
+    for (var k = Math.max(0, lo - 1); k <= Math.min(a.length - 1, lo + 1); k++) {
+      var d = Math.abs(a[k].t - t);
+      if (d < bd) { bd = d; best = a[k]; }
+    }
+    if (!best || bd > 130 || best.gap || best.q === undefined || !best.detected) return null;
+    return { midi: best.q + (S.refShiftOct || 0), t: best.t };
+  }
+
   function buildExport() {
-    var targets = S.notes.filter(function (n) { return n.midi !== null; }).map(function (n) {
-      var ni = PT.describeMidi(n.midi, S.a4, false);
+    var targets = (S.refSegs || []).map(function (sg) {
+      var m = (sg.midiFine === undefined ? sg.midi : sg.midiFine) + (S.refShiftOct || 0);
+      var ni = PT.describeMidi(m, S.a4, false);
       return {
-        name: n.name, startMs: Math.round(n.startMs), endMs: Math.round(n.endMs),
-        midi: n.midi, solfege: ni.solfege + ni.octave, freq: +PT.midiToFreq(n.midi, S.a4).toFixed(2)
+        startMs: Math.round(sg.startMs), endMs: Math.round(sg.endMs),
+        midi: +m.toFixed(3), solfege: ni.solfege + ni.octave,
+        freq: +PT.midiToFreq(m, S.a4).toFixed(2)
       };
     });
     var points = S.samples.map(function (s) {
       var midi = PT.freqToMidi(s.f, S.a4);
-      var tg = targetAt(s.t);
+      var tg = refTargetAt(s.t);
       return {
         t: Math.round(s.t), f: s.f, midi: +midi.toFixed(3),
-        cents: +( (midi - Math.round(midi)) * 100 ).toFixed(1),
-        targetMidi: tg && tg.midi !== null ? tg.midi : null,
-        centsVsTarget: tg && tg.midi !== null ? +((midi - tg.midi) * 100).toFixed(1) : null
+        cents: +((midi - Math.round(midi)) * 100).toFixed(1),
+        targetMidi: tg ? +tg.midi.toFixed(3) : null,
+        centsVsTarget: tg ? +((midi - tg.midi) * 100).toFixed(1) : null
       };
     });
     return {
       app: 'vocal-pitch-monitor-karaoke',
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
-      song: S.song ? { id: S.song.id, title: S.song.title, tag: S.song.tag, bpm: S.song.bpm } : null,
-      a4: S.a4, transpose: S.transpose, speed: S.speed,
-      guideMelody: S.guide, metronome: S.metro,
+      source: S.audioName || null,
+      a4: S.a4,
       myRange: { low: S.rangeLow, high: S.rangeHigh },
+      extract: { vocalBand: S.vocalBand, vocalPreset: S.vocalPreset, shiftOct: S.refShiftOct },
       summary: S.result ? {
         total: S.result.total, avgAbsCents: +S.result.avgAbs.toFixed(1),
         biasCents: +S.result.bias.toFixed(1), in50Percent: +S.result.in50.toFixed(1),
-        sungNotes: S.result.sungCount, totalNotes: S.result.rows.length
+        sungNotes: S.result.sungCount, totalNotes: S.result.rows.length, refBased: true
       } : null,
       perNote: S.result ? S.result.rows.map(function (r) {
         return {
-          index: r.index, targetSolfege: r.targetSol, targetMidi: r.targetMidi,
+          index: r.index, targetSolfege: r.targetSol, targetMidi: +r.targetMidi.toFixed(3),
           yourMidi: r.medMidi === null ? null : +r.medMidi.toFixed(3),
           cents: r.cents === null ? null : +r.cents.toFixed(1),
           samples: r.samples, score: r.score
         };
       }) : [],
-      fields: { t: '相对开始的毫秒', f: '检测到的频率Hz', midi: 'MIDI音号(69=la4=440Hz)', centsVsTarget: '相对该时刻目标音的偏差音分' },
+      fields: {
+        startMs: '目标音开始时间(ms)', t: '你演唱的采样时间(ms)', f: '检测到的频率Hz',
+        midi: 'MIDI音号(小数,69=la4=440Hz)', centsVsTarget: '相对该时刻目标旋律的偏差音分'
+      },
       targets: targets,
       points: points
     };
@@ -899,7 +659,7 @@
   function exportJSON() {
     if (!S.samples.length) { setStatus('还没有录音数据，先唱一遍。'); return; }
     var d = buildExport();
-    downloadFile('karaoke-' + (S.song ? S.song.id : 'free') + '-' + stamp() + '.json', JSON.stringify(d, null, 2), 'application/json');
+    downloadFile('karaoke-' + stamp() + '.json', JSON.stringify(d, null, 2), 'application/json');
     setStatus('已导出 JSON（含目标音高线 + 你的原始轨迹），发给我我就能逐音分析。');
   }
 
@@ -909,7 +669,7 @@
     S.samples.forEach(function (s) {
       var midi = PT.freqToMidi(s.f, S.a4);
       var ni = PT.describeMidi(midi, S.a4, false);
-      var tg = targetAt(s.t);
+      var tg = refTargetAt(s.t);
       rows.push([
         (s.t / 1000).toFixed(2), s.f.toFixed(2), midi.toFixed(3),
         ((midi - Math.round(midi)) * 100).toFixed(1),
@@ -1001,6 +761,9 @@
   /** 通用入口：载入一个音频 File（+ 可选同名 .lrc）。曲库、文件选择都走这里 */
   function loadAudioFile(f, lrcFile) {
     S.karaAxis = null;
+    S.mode = 'free';
+    S.songPos = 0;
+    S.audioName = f.name;
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
         S.lrc = parseLRC(txt);
@@ -1022,6 +785,11 @@
       $('audioName').parentNode.appendChild(S.audioEl);
       S.audioEl.addEventListener('play', function () {
         if (!S.freeRec) setStatus('▶ 音频播放中。要记录你的音高，点「⏺ 开始记录我的音高」。');
+      });
+      S.audioEl.addEventListener('loadedmetadata', function () {
+        if (S.audioEl.duration && isFinite(S.audioEl.duration)) S.totalMs = S.audioEl.duration * 1000;
+        S.karaAxis = null;
+        drawKara();
       });
     }
     S.audioEl.src = S.audioUrl;
@@ -1063,32 +831,13 @@
    * 事件绑定
    * ============================================================ */
   function bindEvents() {
-    $('songSel').addEventListener('change', function () { selectSong(this.value, false); });
-    $('speedSel').addEventListener('change', function () {
-      S.speed = parseFloat(this.value) || 1;
-      rebuildTimeline();
-      saveSettings();
-    });
-    $('trDown').addEventListener('click', function () { changeTranspose(-1); });
-    $('trUp').addEventListener('click', function () { changeTranspose(+1); });
-    $('autoTrBtn').addEventListener('click', function () {
-      var b = autoFit();
-      drawKara(); updateHUD();
-      if (b) setStatus('已自动移调 <b>' + (b.s > 0 ? '+' : '') + b.s + '</b> 个半音' + (b.overflow ? '（这首歌对你来说跨度偏大，已经尽量贴近你的音域）' : '，现在整首歌都在你的音域里了。'));
-    });
-    $('guideChk').addEventListener('change', function () { S.guide = this.checked; saveSettings(); });
-    $('metroChk').addEventListener('change', function () { S.metro = this.checked; saveSettings(); });
-    $('demoBtn').addEventListener('click', function () {
-      if (S.playing) { stopAudio(); return; }
-      playSequence('demo');
-      if (!S.running) requestAnimationFrame(visualLoop);
-    });
-    $('startBtn').addEventListener('click', startSing);
-    $('stopBtn').addEventListener('click', function () {
-      if (S.freeRec) { toggleFreeRec(); return; }
-      if (S.mode === 'sing' && S.samples.length > 30) { finishSing(); }
-      else { stopAudio(); setStatus('已停止。'); }
-    });
+    
+    
+    
+    
+    
+    
+    
     $('exportBtn').addEventListener('click', exportJSON);
     $('csvBtn').addEventListener('click', exportCSV);
     $('clearBtn').addEventListener('click', function () {
@@ -1117,43 +866,9 @@
     });
   }
 
-  function changeTranspose(d) {
-    S.transpose = clamp(S.transpose + d, -24, 12);
-    applyTranspose();
-    saveSettings();
-    drawKara(); updateHUD();
-    if (S.sungMin < S.rangeLow || S.sungMax > S.rangeHigh) {
-      setStatus('现在这个调超出你的音域了（唱到的音 ' + PT.midiToName(S.sungMin) + '~' + PT.midiToName(S.sungMax) +
-        '），点「🎯 自动适配我的音域」或继续按 − 降调。');
-    }
-  }
 
-  function startSing() {
-    if (S.playing) { stopAudio(); return; }
-    ensureMic().then(function () {
-      playSequence('sing');
-    }).catch(function (e) {
-      setStatus('拿不到麦克风：' + (e && e.message ? e.message : e) + '（要点「允许」，并且页面必须是 https 或 localhost）');
-    });
-  }
 
   /* 没有麦克风时（只听旋律），也要能滚动画面 */
-  function visualLoop(ts) {
-    if (!S.playing || S.running) return;
-    if (!ts) ts = performance.now();
-    if (ts - S.lastDraw < 33) { requestAnimationFrame(visualLoop); return; }
-    S.lastDraw = ts;
-    var now = performance.now();
-    S.songPos = now - S.t0Perf;
-    if (now > S.endAtPerf) {
-      stopAudio();
-      S.songPos = S.totalMs;
-      setStatus('播放完了。点「🎤 开始跟唱打分」换你来唱。');
-    }
-    drawKara();
-    updateHUD();
-    if (S.playing) requestAnimationFrame(visualLoop);
-  }
 
 
 /* ============================================================
@@ -1252,13 +967,22 @@
           raw.push({
             t: t,
             f: r.freq > 0 ? r.freq : null,
-            midi: (r.freq > 0 && r.confidence > 0.25) ? PT.freqToMidi(r.freq, S.a4) : null,
+            midi: (r.freq > 0 && r.confidence > 0.35) ? PT.freqToMidi(r.freq, S.a4) : null,
             conf: r.confidence || 0,
             rms: rms
           });
         }
         if (onProgress) onProgress(idx / frames);
         if (idx < frames) { setTimeout(step, 0); return; }
+        /* 自适应"有没有人在唱"门限：以这首歌自己的能量分布为基准。
+           前奏/间奏里只有伴奏时，人声频段能量通常明显低于演唱段 →
+           这些帧直接判为"没人声"，线就断开（而不是跟着乐器画出一条绿线）。*/
+        var rmss = raw.map(function (r) { return r.rms; }).sort(function (x, y) { return x - y; });
+        var p50 = rmss.length ? rmss[Math.floor(rmss.length * 0.5)] : 0;
+        var gate = Math.max(0.004, p50 * 0.14);   // 只砍掉明显没在唱的部分，别误伤弱唱段
+        raw.forEach(function (r) {
+          if (r.rms < gate) { r.midi = null; r.f = null; r.quiet = true; }
+        });
         resolve(viterbiPath(raw));
       }
       step();
@@ -1313,13 +1037,13 @@
         t: r.t, f: r.f, midi: r.midi, conf: r.conf, rms: r.rms,
         q: path[k],
         detected: r.midi !== null,
-        gap: (r.midi === null && r.rms < 0.012)
+        gap: (r.quiet || (r.midi === null && r.rms < 0.012))
       };
     });
   }
 
   function emitCost(r, s) {
-    if (r.midi === null) return r.rms < 0.012 ? 0.05 : 0.5;    // 静音：几乎免费地"维持"；有声音但没测准：小惩罚
+    if (r.midi === null) return r.quiet ? 0.05 : 0.5;
     return Math.abs(r.midi - s) - Math.min(0.6, r.conf) * 0.5;
   }
 
@@ -1337,16 +1061,18 @@
       }
       cur.lastT = p.t;
       cur.n++;
-      if (p.midi !== null) cur.raws.push(p.midi);
+      if (p.midi !== null) { cur.raws.push(p.midi); cur.confSum = (cur.confSum || 0) + (p.conf || 0); }
     });
     flush();
     return segs.filter(function (s) {
       /* 至少 1/3 的帧是真的检测到音高（其余是 Viterbi 推的），才算可靠的音、才拿去打分 */
       return (s.lastT - s.startMs) >= 120 && s.n >= 3 &&
-             s.raws.length >= Math.max(2, Math.ceil(s.n * 0.33));
+             s.raws.length >= Math.max(2, Math.ceil(s.n * 0.33)) &&
+             (s.confAvg === undefined || s.confAvg >= 0.45);
     }).map(function (s) {
       var fine = median(s.raws);
-      return { startMs: s.startMs, endMs: s.lastT, midi: Math.round(fine), midiFine: fine, n: s.n };
+      return { startMs: s.startMs, endMs: s.lastT, midi: Math.round(fine), midiFine: fine, n: s.n,
+               confAvg: s.raws.length ? (s.confSum || 0) / s.raws.length : 0 };
     }).filter(function (s) {
       return (s.endMs - s.startMs) >= 150;                  // 太短的碎片（换音瞬间）直接丢掉
     }).reduce(function (acc, s) {
