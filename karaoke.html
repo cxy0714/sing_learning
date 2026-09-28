@@ -39,9 +39,15 @@
     <div class="row wrap">
       <input id="libSearch" class="lib-search" type="search" placeholder="搜索歌手或歌名（中文；空格分隔多个词，例如「周华健 难念」）…" />
       <select id="libArtist" class="mini-select"></select>
-      <label class="field checkbox"><input id="libVocals" type="checkbox" checked /> 优先用人声分离版（线更准）</label>
+      <label class="field checkbox"><input id="libVocals" type="checkbox" checked /> 有分离版就用它提参考线（更准；播放仍是伴奏版）</label>
     </div>
     <div id="libInfo" class="muted small">还没授权文件夹。</div>
+    <div class="row wrap lib-actions">
+      <button id="syncRecBtn" class="btn btn-primary" disabled>🎤 开始唱歌（自动对齐 · 可打分）</button>
+      <button id="freeRecBtn" class="btn" disabled>⏺ 只记录我的音高（不评分）</button>
+      <span id="audioName" class="muted small">还没有选歌</span>
+      <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词</label>
+    </div>
     <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
   </section>
 
@@ -72,6 +78,7 @@
     </div>
 
     <canvas id="karaChart" class="kara-chart"></canvas>
+    <div id="lyrics" class="lyrics"></div>
 
     <p class="muted small">
       <b>灰蓝色阶梯线</b> = 这首歌的标准音高（虚线是休止/换气）；
@@ -102,47 +109,28 @@
     <p id="resultHint" class="muted small"></p>
   </section>
 
-  <!-- ===== 自由练习：上传自己的音频 ===== -->  <section class="card card--wide">
-    <div class="card-head"><h2>④ 播放器 / 跟唱（曲库选歌后会载入到这里）</h2></div>
-    <p id="songInfo" class="status">在①里选一首歌，或者直接选下面的本地音频文件。</p>
-    <p class="muted small">
-      也可以不用曲库，直接选本地音乐（<b>mp3 / m4a / wav / flac</b>）。网页会做两件事：
-    </p>
-    <ol class="muted small" style="margin-top:-6px">
-      <li><b>从音频里估出主旋律音高线</b>（伴奏里贝斯最"规整"，最容易把算法带跑，所以我默认做了
-          <b>人声滤波</b> + <b>限定人声范围</b>；这两个可以在下面调）——这条线会画在②里给你看对不对；</li>
-      <li>麦克风记录<b>你唱的音高线</b>，和它叠在一起，<b>就能给任意本地歌曲打分</b>了。</li>
-    </ol>
+  <!-- ===== 播放器 / 提取设置 ===== -->
+  <section class="card card--wide">
+    <div class="card-head"><h2>④ 播放器 / 提取设置</h2></div>
+    <p id="songInfo" class="status">在①的曲库里点一首歌，就会载入到这里。</p>
+    <div id="audioBox"></div>
     <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
-      💡 <b>想让音高线更准（推荐）</b>：浏览器里只能"尽力避开"贝斯和鼓，伴奏一满还是会被带跑。
-      现在主流做法是<b>先把人声分离出来</b>（Demucs / UVR），再提取音高 —— 本仓库给了一个脚本：
-      <code>powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "你的歌.mp3"</code>
-      分离出的 <b>xxx.vocals.mp3</b> 在下面选进来，线就会干净非常多（纯人声时可以把「人声滤波」关掉）。
+      💡 <b>线更准的秘诀</b>：有 <code>xxx.vocals.mp3</code>（Demucs 人声分离版）时，
+      <b>参考线从人声版提取</b>（干净），<b>播放的却是完整伴奏版</b> —— 两边自动配对。
+      没有分离版时就用完整版直接估线（伴奏一满可能被带跑，这时调下面的人声范围 / 滤波）。
     </p>
     <p class="muted small">
-      ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把歌一起收进去。<br>
-      ⚠️ 网易云下载的 <b>.ncm / .uc!</b> 是加密格式，浏览器解不了，请先用工具转成 mp3/flac。<br>
-      ⚠️ 提取的线只是"估计"，如果它看起来不像这首歌的旋律（比如跟着贝斯跑了），那评分就不准——这时候用下面「只记录我的音高」+ 导出给我分析更靠谱。
+      ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把伴奏一起收进去。<br>
+      ⚠️ 网易云下载的 <b>.ncm</b> 是加密格式，浏览器解不了，先用 <code>tools/ncmdump.js</code> 转成 mp3。
     </p>
-    <div class="row wrap">
-      <input type="file" id="audioFile" accept="audio/*,.lrc" multiple class="file-input" />
-      <span class="muted small">可以一次把 <b>.mp3 和同名的 .lrc 歌词一起选上</b>（浏览器不能扫硬盘，得你手动选）</span>
-    </div>
-    <div class="row wrap">
-      <button id="freeRecBtn" class="btn" disabled>⏺ 只记录我的音高</button>
-      <button id="syncRecBtn" class="btn btn-primary" disabled>🎤 从头同步跟唱（自动对齐 · 可打分）</button>
-      <span id="audioName" class="muted small">还没有选择音频</span>
-      <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词</label>
-    </div>
     <div class="row wrap">
       <label class="field">人声范围（提取旋律用）
         <select id="vocalSel" class="mini-select"></select>
       </label>
       <label class="field checkbox"><input id="vocalBandChk" type="checkbox" checked /> 人声滤波（滤掉贝斯/鼓）</label>
-      <span class="muted small">这两个开关决定能不能跟上人声；如果线跟着贝斯跑了，就调这里</span>
+      <span class="muted small">线跟着贝斯跑了就调这里</span>
     </div>
     <div id="refProgress" class="muted small"></div>
-    <div id="lyrics" class="lyrics"></div>
     <div id="freeResult" class="prac-result"></div>
   </section>
 

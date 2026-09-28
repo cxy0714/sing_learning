@@ -549,7 +549,7 @@
     var c1 = r.total >= 85 ? 's1' : (r.total >= 60 ? 's2' : 's3');
     var biasTxt = r.bias >= 0 ? '整体偏高' : '整体偏低';
     var cards = [
-      { k: '总分', v: '<span class="score-big ' + c1 + '">' + r.total + '</span>', cls: '' },
+      { k: '已唱平均分', v: '<span class="score-big ' + c1 + '">' + r.total + '</span>', cls: '' },
       { k: '平均|偏差|', v: num(r.avgAbs, 1) + ' 音分', cls: scoreClass(100 - Math.abs(r.avgAbs) * 1.2) },
       { k: '唱到的音', v: r.sungCount + ' / ' + r.rows.length + '（' + r.coverage.toFixed(0) + '%）', cls: r.coverage >= 90 ? 'good' : (r.coverage >= 60 ? 'warn' : 'bad') },
       { k: '±50 音分内', v: r.in50.toFixed(0) + '%', cls: r.in50 >= 85 ? 'good' : (r.in50 >= 60 ? 'warn' : 'bad') },
@@ -758,33 +758,44 @@
     loadAudioFile(f, lrcFile);
   }
 
-  /** 通用入口：载入一个音频 File（+ 可选同名 .lrc）。曲库、文件选择都走这里 */
-  function loadAudioFile(f, lrcFile) {
+  /** 通用入口：载入一首歌
+   *   f       —— 用来【播放】的音频（完整版，带伴奏）
+   *   lrcFile —— 可选歌词
+   *   refFile —— 可选：用来【提取参考旋律线】的音频（一般传人声分离版的 vocals）
+   */
+  function loadAudioFile(f, lrcFile, refFile) {
     S.karaAxis = null;
     S.mode = 'free';
     S.songPos = 0;
     S.audioName = f.name;
+    S.refSourceName = (refFile && refFile !== f) ? refFile.name : null;
+
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
         S.lrc = parseLRC(txt);
         S._lyIdx = -1;
         updateLyrics(-1);
-        $('freeResult').innerHTML = '📄 已配歌词 <b>' + lrcFile.name + '</b>（' + S.lrc.length + ' 行）'
-          + (S.lrc.length ? '' : '：这个文件里没有时间标签，可能是个纯音乐。') + '。';
+        setStatus('📄 已配歌词 <b>' + lrcFile.name + '</b>（' + S.lrc.length + ' 行）'
+          + (S.lrc.length ? '' : '：这个文件里没有时间标签，可能是个纯音乐。'));
       });
     } else {
       S.lrc = null; S._lyIdx = -1;
-      $('lyrics').innerHTML = '';
+      var ly = $('lyrics'); if (ly) ly.innerHTML = '';
     }
+
     if (S.audioUrl) URL.revokeObjectURL(S.audioUrl);
     S.audioUrl = URL.createObjectURL(f);
     if (!S.audioEl) {
       S.audioEl = document.createElement('audio');
       S.audioEl.controls = true;
       S.audioEl.className = 'audio-player';
-      $('audioName').parentNode.appendChild(S.audioEl);
+      var box = $('audioBox') || ($('audioName') ? $('audioName').parentNode : null);
+      if (box) box.appendChild(S.audioEl);
       S.audioEl.addEventListener('play', function () {
-        if (!S.freeRec) setStatus('▶ 音频播放中。要记录你的音高，点「⏺ 开始记录我的音高」。');
+        if (!S.freeRec) setStatus('▶ 正在播放（完整伴奏版）。要打分就点「🎤 开始唱歌」。');
+      });
+      S.audioEl.addEventListener('ended', function () {
+        if (S.freeRec) stopFreeRec(true);
       });
       S.audioEl.addEventListener('loadedmetadata', function () {
         if (S.audioEl.duration && isFinite(S.audioEl.duration)) S.totalMs = S.audioEl.duration * 1000;
@@ -793,16 +804,15 @@
       });
     }
     S.audioEl.src = S.audioUrl;
-    $('audioName').textContent = f.name + '（' + (f.size / 1048576).toFixed(1) + ' MB）';
-    $('freeRecBtn').disabled = false;
-    $('freeResult').innerHTML = '音频已载入。正在后台估计这首歌的旋律线…';
-    if (!S.audioEl._vpmHooked) {
-      S.audioEl._vpmHooked = true;
-      S.audioEl.addEventListener('ended', function () {
-        if (S.freeRec) stopFreeRec(true);
-      });
-    }
-    extractFromFile(f);
+
+    var an = $('audioName');
+    if (an) an.textContent = '▶ ' + f.name + (S.refSourceName ? ' ｜参考线：人声版' : '');
+    var fr = $('freeRecBtn'); if (fr) fr.disabled = false;
+    var sr = $('syncRecBtn'); if (sr) sr.disabled = false;
+    setStatus('已载入 <b>' + f.name + '</b>'
+      + (S.refSourceName ? '，参考线从 <b>' + S.refSourceName + '</b> 提取（播放的是完整伴奏版）' : '')
+      + '，正在后台估旋律线…');
+    extractFromFile(refFile || f);
   }
 
   function toggleFreeRec() {
@@ -844,7 +854,6 @@
       S.samples = []; S.result = null; renderResult(); drawKara();
       setStatus('已清空本次录音数据。');
     });
-    $('audioFile').addEventListener('change', onFilePicked);
     $('freeRecBtn').addEventListener('click', toggleFreeRec);
     $('syncRecBtn').addEventListener('click', syncSing);
     $('lrcChk').addEventListener('change', function () { S._lyIdx = -1; updateLyrics(S.songPos > -9000 ? S.songPos : 0); });
@@ -925,17 +934,24 @@
   function extractReference(audioBuf, onProgress) {
     return new Promise(function (resolve) {
       var srcRate = audioBuf.sampleRate;
+      /* 保险：超长音频（>15 分钟，常见于整场录音/超大 wav）只处理前 15 分钟，
+         否则解码后的浮点数组可能吃掉几个 GB 内存，页面看起来就像"卡死" */
+      var MAX_SEC = 900;
+      var maxSamples = Math.min(audioBuf.length, Math.floor(srcRate * MAX_SEC));
       var ratio = Math.max(1, Math.round(srcRate / 11025));   // 降到约 11kHz，够测人声
       var sr = srcRate / ratio;
-      var len = Math.floor(audioBuf.length / ratio);
+      var len = Math.floor(maxSamples / ratio);
       var chs = [];
-      for (var c = 0; c < audioBuf.numberOfChannels; c++) chs.push(audioBuf.getChannelData(c));
+      for (var c = 0; c < audioBuf.numberOfChannels; c++) {
+        var ch = audioBuf.getChannelData(c);
+        chs.push(maxSamples < ch.length ? ch.subarray(0, maxSamples) : ch);
+      }
 
       /* 先按原始采样率混成单声道，再带通滤波，最后降采样。
          带通：高通 120Hz 甩掉贝斯/底鼓（它们周期性最强，不滤掉 YIN 会一直锁到贝斯），
                低通 1200Hz 甩掉镲片/齿音，同时充当降采样的抗混叠滤波。 */
-      var full = new Float32Array(audioBuf.length);
-      for (var i0 = 0; i0 < audioBuf.length; i0++) {
+      var full = new Float32Array(maxSamples);
+      for (var i0 = 0; i0 < maxSamples; i0++) {
         var acc0 = 0;
         for (var k0 = 0; k0 < chs.length; k0++) acc0 += chs[k0][i0];
         full[i0] = acc0 / chs.length;
@@ -951,7 +967,7 @@
       var frames = Math.max(1, Math.floor(Math.max(0, len - win) / hop) + 1);
       var raw = [];
       var idx = 0;
-      var CHUNK = 100;
+      var CHUNK = 40;   // 每轮处理的帧数：调小一些，慢设备上更不容易卡顿
       function step() {
         var stop = Math.min(frames, idx + CHUNK);
         for (; idx < stop; idx++) {
@@ -1138,7 +1154,8 @@
     });
     if (!rows.length) { S.result = null; return null; }
     var sung = rows.filter(function (r) { return r.cents !== null; });
-    var total = Math.round(mean(rows.map(function (r) { return r.score; })));
+    /* 只按"你真正唱到的片段"算分：没唱到的不扣分，覆盖率单独显示 */
+    var total = sung.length ? Math.round(mean(sung.map(function (r) { return r.score; }))) : 0;
     var worst = null;
     rows.forEach(function (r) { if (!worst || r.score < worst.score) worst = r; });
     S.result = {
@@ -1156,7 +1173,7 @@
 
   function extractFromFile(file) {
     var prog = $('refProgress');
-    prog.textContent = '① 正在解码音频…（大文件要几秒）';
+    prog.textContent = '① 正在解码『' + file.name + '』…（大文件要几秒）';
     S.refTrack = null; S.refSegs = null; S.refShiftOct = 0;
     $('syncRecBtn').disabled = true;
     decodeFile(file).then(function (ab) {
@@ -1204,7 +1221,9 @@
       $('freeResult').innerHTML = '🎤 正在同步跟唱：歌在放，同时记录你的音高。<b>戴耳机！</b>';
       S._lyIdx = -1;
       updateLyrics(0);
-      setStatus('同步跟唱中…唱完会自动出分（基准 = 从音频估出来的旋律线）。');
+      setStatus('🎤 开始唱了！随时可以停（再点一次按钮），只按你唱到的部分算分。基准 = 从音频估出来的旋律线。');
+      var cv = $('karaChart');
+      if (cv && cv.scrollIntoView) cv.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }).catch(function (e) {
       $('freeResult').textContent = '拿不到麦克风：' + (e && e.message ? e.message : e);
     });

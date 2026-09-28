@@ -307,24 +307,28 @@
 
   function loadSong(s) {
     var K = window.KaraokeAPI;
-    if (!K) { info('播放器还没准备好，刷新一下页面。'); return; }
-    var useVoc = $('libVocals') && $('libVocals').checked && s.vocals;
-    var audio = useVoc ? s.vocals : s.audio;
-    if (!audio) { info('这首歌只有伴奏/歌词，没有可播放的音频。'); return; }
-    info('正在载入：<b>' + s.artist + ' - ' + s.title + '</b>' + (useVoc ? '（人声分离版）' : '') + ' …');
+    if (!K) { info('播放器还没准备好，请按 Ctrl+F5 强制刷新一次。'); return; }
+    var preferVocals = $('libVocals') && $('libVocals').checked;
+    var playItem = s.audio || s.vocals;                       // 播放：完整版（带伴奏）
+    var refItem = (preferVocals && s.vocals) ? s.vocals : null; // 参考线：人声分离版
+    if (!playItem) { info('这首歌没有可播放的音频（可能只有 .ncm，需要先转换）。'); return; }
+    info('正在载入：<b>' + s.artist + ' - ' + s.title + '</b>'
+      + (refItem ? '（播放完整伴奏版 · 参考线用人声版）' : '') + ' …');
     Promise.all([
-      audio.getFile(),
-      s.lrc ? s.lrc.getFile().catch(function () { return null; }) : Promise.resolve(null)
+      playItem.getFile(),
+      s.lrc ? s.lrc.getFile().catch(function () { return null; }) : Promise.resolve(null),
+      refItem ? refItem.getFile().catch(function () { return null; }) : Promise.resolve(null)
     ]).then(function (r) {
       S.lastKey = s.key;
       render();
-      K.load(r[0], r[1]);
-      info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>。先看②的音高线（在④点「▶」播放听一遍），' +
-        '再到④点「🎤 从头同步跟唱（自动对齐 · 可打分）」。');
-      var card = document.getElementById('freeRecBtn');
-      if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      K.load(r[0], r[1], r[2]);
+      var sr = document.getElementById('syncRecBtn');
+      if (sr) sr.disabled = false;
+      info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>'
+        + (r[2] ? '：播放的是<b>完整伴奏版</b>，参考线来自<b>人声分离版</b>（线更干净）。' : '：参考线直接从这首歌里估。')
+        + '<br>准备好就点 <b>「🎤 开始唱歌」</b> —— <b>随时可以停</b>，按你唱到的部分算分。');
     }).catch(function (e) {
-      info('读文件失败：' + (e && e.message ? e.message : e) + '（可能是权限失效，重新选一次文件夹）');
+      info('读文件失败：' + (e && e.message ? e.message : e) + '（可能是授权失效，重新选一次文件夹）');
     });
   }
 
