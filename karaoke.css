@@ -59,3 +59,37 @@
 .lyrics:empty { display: none; }
 .ly-line { font-size: 15px; color: #5c6c8d; transition: color .15s; }
 .ly-line.ly-on { font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 0 18px rgba(96,165,250,.45); }
+/* ===== 本地曲库 ===== */
+.hidden-file { display: none; }
+.lib-search {
+  background: #0d1425; border: 1px solid var(--line); color: var(--text);
+  border-radius: 8px; padding: 8px 12px; font-size: 14px; min-width: 260px; flex: 1;
+}
+.lib-list {
+  margin-top: 10px; max-height: 430px; overflow: auto;
+  border: 1px solid var(--line); border-radius: 10px; background: #0c1322;
+}
+.lib-list > p { padding: 10px 12px; }
+.lib-head {
+  position: sticky; top: 0; z-index: 1; background: #101a2e; padding: 7px 12px;
+  font-size: 12.5px; color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.lib-item {
+  display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr) auto auto;
+  gap: 10px; align-items: center; padding: 7px 12px; font-size: 13.5px;
+  border-bottom: 1px solid rgba(43, 55, 87, .5); cursor: pointer;
+}
+.lib-item:hover { background: #16223d; }
+.lib-item.on { background: rgba(74, 222, 128, .12); }
+.lib-title { font-weight: 600; color: #e8edf9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-artist { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-tags { display: flex; gap: 4px; flex-wrap: nowrap; }
+.tag { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.tag-v { color: #4ade80; border-color: #2c5a42; }
+.tag-l { color: #60a5fa; border-color: #2c4170; }
+.tag-d { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.lib-go { color: var(--accent-2); font-weight: 700; white-space: nowrap; }
+@media (max-width: 700px) {
+  .lib-item { grid-template-columns: 1fr auto; }
+  .lib-artist, .tag-d { display: none; }
+}

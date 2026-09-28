@@ -963,6 +963,11 @@
         if (/\.lrc$/i.test(list[w].name) && baseName(list[w].name) === baseName(f.name)) { lrcFile = list[w]; break; }
       }
     }
+    loadAudioFile(f, lrcFile);
+  }
+
+  /** 通用入口：载入一个音频 File（+ 可选同名 .lrc）。曲库、文件选择都走这里 */
+  function loadAudioFile(f, lrcFile) {
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
         S.lrc = parseLRC(txt);
@@ -1475,6 +1480,14 @@
       '<br>把音频和这份数据一起发我，我帮你看哪一段把你自己顶住了。';
     setStatus('自由练习记录完成。');
   }
+
+  /* 给曲库（js/library.js）用的接口 */
+  window.KaraokeAPI = {
+    load: loadAudioFile,
+    status: setStatus,
+    state: S,
+    getRange: function () { return vocalRange(); }
+  };
 
   /* 启动 */
   if (document.readyState === 'loading') {

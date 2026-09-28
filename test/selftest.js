@@ -237,6 +237,67 @@ sec('2. K歌提取与打分');
   T.playShiftTone(); T.drawChart(trk); T.renderStats(stt);
   chk(true, '试听/画图/统计渲染无异常');
 
+  /* ============================================================ */
+  /*  4. 本地曲库（扫描 / 搜索 / 合并）                              */
+  /* ============================================================ */
+  sec('4. 本地曲库');
+  {
+    const sb3 = makeSandbox(makeDom());
+    load(sb3, 'js/library.js');
+    const SL = sb3.SongLibrary;
+    chk(!!SL && !!SL.buildCatalog, 'library.js 暴露 SongLibrary 接口');
+
+    const p1 = SL.parseSongName('周华健 - 难念的经');
+    chk(p1.artist === '周华健' && p1.title === '难念的经', '歌名解析「歌手 - 歌名」', p1.artist + '/' + p1.title);
+    const p2 = SL.parseSongName('2Cellos,Robin Smith - Game of Thrones Medley.ncm');
+    chk(p2.artist === '2Cellos,Robin Smith' && p2.title === 'Game of Thrones Medley', '多歌手解析', p2.artist);
+    const p3 = SL.parseSongName('Despacito');
+    chk(p3.artist === '未知歌手' && p3.title === 'Despacito', '没有「 - 」时归到未知歌手', p3.artist);
+    chk(SL.stripCopySuffix('红豆 (1)') === '红豆' && SL.stripCopySuffix('难念的经 (Live版)') === '难念的经 (Live版)', '去掉重复下载的 (1) 后缀、保留 (Live版)');
+
+    const G = () => Promise.resolve(null);
+    const items = [
+      { name: '周华健 - 难念的经.mp3', rel: 'CloudMusic/周华健 - 难念的经.mp3', getFile: G },
+      { name: '周华健 - 难念的经.mp3', rel: 'CloudMusic/converted/周华健 - 难念的经.mp3', getFile: G },
+      { name: '周华健 - 难念的经.lrc', rel: 'CloudMusic/周华健 - 难念的经.lrc', getFile: G },
+      { name: '周华健 - 难念的经.vocals.mp3', rel: 'CloudMusic/vocals/周华健 - 难念的经.vocals.mp3', getFile: G },
+      { name: '王菲 - 红豆.ncm', rel: 'CloudMusic/王菲 - 红豆.ncm', getFile: G },
+      { name: '邓紫棋 - 光年之外.flac', rel: 'CloudMusic/邓紫棋 - 光年之外.flac', getFile: G },
+      { name: '邓紫棋 - 光年之外.lrc', rel: 'CloudMusic/邓紫棋 - 光年之外.lrc', getFile: G }
+    ];
+    const cat = SL.buildCatalog(items);
+    chk(cat.songs.length === 2, '同名副本合并成一条（跨文件夹）', cat.songs.length + ' 首');
+    const z = cat.songs.find(s => s.title === '难念的经');
+    chk(z && z.audio && z.vocals && z.lrc, '一份条目里同时配上 音频+人声版+歌词',
+      z ? [z.audio.name, z.vocals.name, z.lrc.name].join(' | ') : '');
+    chk(z && z.audio.name === '周华健 - 难念的经.mp3', '主音频优先选「歌词在旁边」的那份', z ? z.audio.name : '');
+    chk(cat.ncmCount === 1, '.ncm 会统计成「未转换」提示', cat.ncmCount);
+    chk(SL.filterCatalog(cat.songs, '周华健').length === 1, '按歌手搜索');
+    chk(SL.filterCatalog(cat.songs, '难念').length === 1, '按歌名搜索');
+    chk(SL.filterCatalog(cat.songs, '周华健 难念').length === 1, '多关键词搜索');
+    chk(SL.filterCatalog(cat.songs, 'zzz不存在').length === 0, '搜不到就返回空');
+
+    /* 本机真有音乐目录时，拿真实文件名跑一遍 */
+    try {
+      if (fs.existsSync('C:/CloudMusic')) {
+        const scanDir = (dir, rel, out) => {
+          for (const n of fs.readdirSync(dir)) {
+            const p = path.join(dir, n);
+            if (fs.statSync(p).isDirectory()) scanDir(p, rel + n + '/', out);
+            else out.push({ name: n, rel: rel + n, getFile: G });
+          }
+        };
+        const real = [];
+        scanDir('C:/CloudMusic', '', real);
+        const rc = SL.buildCatalog(real);
+        chk(rc.songs.length > 500, '真实音乐目录扫描（C:\\CloudMusic）', real.length + ' 个文件 → ' + rc.songs.length + ' 首 / ' +
+          new Set(rc.songs.map(s => s.artist)).size + ' 位歌手 / 带歌词 ' + rc.songs.filter(s => s.lrc).length);
+        chk(rc.ncmCount > 0, '能识别未转换的 .ncm 数量', rc.ncmCount);
+      } else {
+        chk(true, '本机没有 C:\\CloudMusic，跳过真实目录测试');
+      }
+    } catch (e) { chk(false, '真实目录扫描不应报错', e.message); }
+  }
   /* ---------- 结果 ---------- */
   console.log('\n' + '='.repeat(52));
   if (fail) {

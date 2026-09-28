@@ -105,6 +105,11 @@
   让整首歌落进你的音域；也可以手动 ±半音
 - **速度**：0.6x / 0.8x / 1.0x / 1.15x，慢练不丢人
 - **本地音乐**：任意 mp3/flac 都能进来练，并自动估出旋律线当评分基准
+- **本地曲库（④）**：**授权一次音乐文件夹**（Chrome/Edge 会记住授权，下次点一下恢复），
+  自动把整个目录（含子目录）整理成歌单：**按歌手 / 歌名搜索**（支持多个关键词、中文）、
+  点一下**直接载入播放器开唱**。会自动配对歌词 `.lrc`、**跨目录认领**人声分离版 `xxx.vocals.mp3`、
+  同名副本自动合并成一条，并统计还有多少 `.ncm` 没转换。
+  浏览器不给网页自己扫硬盘的权限，所以必须由你授权一次；文件只在本机被读取。
 - **歌词（.lrc）**：选音频时把同名的 `.lrc` 一起选上就会自动配对（按文件名匹配），
   播放/跟唱时同步高亮当前行。做了 UTF-8 / GBK 自动识别。已用真实曲库 200 个 `.lrc`（2282 行）验证解析。
 - **引导旋律 + 节拍器**：浏览器实时合成（不下载任何音频），还有 4 拍起拍
@@ -287,11 +292,13 @@ js/pitch.js      音高检测（YIN 算法）+ 音名/唱名换算，无依赖
 js/app.js        音准检测页逻辑
 js/songs.js      K歌曲库（公有领域旋律，音符序列）
 js/karaoke.js    K歌页逻辑：时间轴、移调、合成播放、打分、导出
+js/library.js    本地曲库：文件夹授权、扫描整理、按歌手/歌名搜索、点歌即唱
 serve.js         本地预览服务器（node serve.js → http://localhost:8000）
 tools/ncmdump.js          .ncm → mp3/flac 转换工具（JavaScript 重写自 MIT 项目 taurusxin/ncmdump）
 tools/separate-vocals.ps1 Demucs 人声分离（去掉伴奏再提音高，解决"跟着贝斯跑"）
 tools/LICENSE-upstream-ncmdump.txt  上游项目许可证
-test/selftest.js          离线回归测试（node test/selftest.js，36 项）
+test/selftest.js          离线回归测试（node test/selftest.js，51 项）
+test/analyze-audio.js     评估「音高线提取」质量（判断跟人声还是跟贝斯）
 .github/workflows/pages.yml   GitHub Pages 自动部署
 README.md        本文件
 ```

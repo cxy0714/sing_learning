@@ -107,9 +107,33 @@
     <p id="resultHint" class="muted small"></p>
   </section>
 
-  <!-- ===== 自由练习：上传自己的音频 ===== -->
+  <!-- ===== 我的曲库 ===== -->
   <section class="card card--wide">
-    <div class="card-head"><h2>④ 自由练习（上传你自己的音频）</h2></div>
+    <div class="card-head">
+      <h2>④ 我的曲库（扫描本地音乐文件夹）</h2>
+      <div class="row wrap">
+        <button id="libPickDir" class="btn btn-primary">📁 选择音乐文件夹（授权一次）</button>
+        <button id="libPickFiles" class="btn btn-ghost btn-sm">兼容模式：选文件夹</button>
+        <input type="file" id="libFiles" webkitdirectory directory multiple class="hidden-file" />
+        <button id="libRescan" class="btn btn-ghost btn-sm" disabled>🔄 重新扫描</button>
+      </div>
+    </div>
+    <p class="muted small">
+      浏览器不允许网页自己扫硬盘，所以要你<b>授权一次</b>：Chrome / Edge 会记住授权（下次点一下就恢复），
+      其它浏览器用「兼容模式」选一次文件夹。之后就能<b>按歌手、歌名搜索，点一下直接唱</b>。
+      文件始终只在你本机被读取，<b>不上传任何地方</b>。
+    </p>
+    <div class="row wrap">
+      <input id="libSearch" class="lib-search" type="search" placeholder="搜索歌手或歌名（中文；空格分隔多个词，例如「周华健 难念」）…" />
+      <select id="libArtist" class="mini-select"></select>
+      <label class="field checkbox"><input id="libVocals" type="checkbox" /> 优先用人声分离版（线更准）</label>
+    </div>
+    <div id="libInfo" class="muted small">还没授权文件夹。</div>
+    <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
+  </section>
+
+  <!-- ===== 自由练习：上传自己的音频 ===== -->  <section class="card card--wide">
+    <div class="card-head"><h2>⑤ 播放器 / 跟唱（曲库选歌后会载入到这里）</h2></div>
     <p class="muted small">
       想练的歌不在上面？把你的本地音乐（<b>mp3 / m4a / wav / flac</b>）选进来。网页会做两件事：
     </p>
@@ -194,5 +218,6 @@
 <script src="js/pitch.js"></script>
 <script src="js/songs.js"></script>
 <script src="js/karaoke.js"></script>
+<script src="js/library.js"></script>
 </body>
 </html>
