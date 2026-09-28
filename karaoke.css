@@ -56,7 +56,7 @@
   margin-top: 10px; min-height: 0; background: #0c1322; border: 1px solid var(--line);
   border-radius: 10px; padding: 10px 14px; text-align: center; line-height: 1.9;
 }
-.lyrics:empty { display: none; }
+.lyrics .ly-none { color: #64748b; font-size: 13.5px; }
 .ly-line { font-size: 15px; color: #5c6c8d; transition: color .15s; }
 .ly-line.ly-on { font-size: 20px; font-weight: 800; color: #fff; text-shadow: 0 0 18px rgba(96,165,250,.45); }
 /* ===== 本地曲库 ===== */
@@ -98,3 +98,5 @@
 .lib-player:empty { display: none; }
 .lib-player .audio-player { width: 100%; }
 .lib-actions { margin-top: 6px; padding-top: 8px; border-top: 1px dashed rgba(43, 55, 87, .8); }
+/* 歌词没内容时的占位样式 */
+.lyrics.has-none { border-style: dashed; background: transparent; }

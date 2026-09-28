@@ -722,7 +722,16 @@
 
   function updateLyrics(t) {
     var box = $('lyrics');
-    if (!$('lrcChk').checked || !S.lrc || !S.lrc.length) { if (S._lyIdx !== -2) { box.innerHTML = ''; S._lyIdx = -2; } return; }
+    if (!box) return;
+    if (!$('lrcChk') || !$('lrcChk').checked) { box.innerHTML = '<span class="ly-none">歌词已隐藏（勾选①里的「显示歌词」可以打开）</span>'; return; }
+    if (!S.lrc || !S.lrc.length) {
+      if (S._lyIdx !== -2) {
+        box.innerHTML = '<span class="ly-none">🎵 这首歌没有歌词文件（.lrc）。歌词会自动配同名的 .lrc —— 放在音频旁边即可；' +
+          '网易云下载的 .lrc 就是直接可用的。</span>';
+        S._lyIdx = -2;
+      }
+      return;
+    }
     var idx = -1;
     for (var i = 0; i < S.lrc.length; i++) { if (S.lrc[i].t <= t) idx = i; else break; }
     if (idx === S._lyIdx) return;
@@ -779,8 +788,12 @@
           + (S.lrc.length ? '' : '：这个文件里没有时间标签，可能是个纯音乐。'));
       });
     } else {
-      S.lrc = null; S._lyIdx = -1;
-      var ly = $('lyrics'); if (ly) ly.innerHTML = '';
+      S.lrc = null; S._lyIdx = -2;
+      var ly = $('lyrics');
+      if (ly) {
+        ly.innerHTML = '<span class="ly-none">🎵 这首歌没找到同名的 .lrc 歌词文件 —— ' +
+          '把 <b>同名 .lrc</b> 放到音频旁边（或同一个音乐文件夹里）再选一次歌就能显示。</span>';
+      }
     }
 
     if (S.audioUrl) URL.revokeObjectURL(S.audioUrl);

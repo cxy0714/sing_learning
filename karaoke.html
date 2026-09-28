@@ -46,7 +46,7 @@
       <button id="syncRecBtn" class="btn btn-primary" disabled>🎤 开始唱歌（自动对齐 · 可打分）</button>
       <button id="freeRecBtn" class="btn" disabled>⏺ 只记录我的音高（不评分）</button>
       <span id="audioName" class="muted small">还没有选歌</span>
-      <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词</label>
+      <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词（在②曲线下方）</label>
     </div>
     <div id="audioBox" class="lib-player"></div>
     <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
@@ -79,6 +79,7 @@
     </div>
 
     <canvas id="karaChart" class="kara-chart"></canvas>
+    <p class="muted small" style="margin:8px 0 2px">▼ 歌词（跟着播放自动高亮当前行）</p>
     <div id="lyrics" class="lyrics"></div>
 
     <p class="muted small">
