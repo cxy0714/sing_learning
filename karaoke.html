@@ -6,7 +6,7 @@
 <title>K歌练习 · 跟唱打分 · 音高线对比</title>
 <meta name="description" content="网页 K 歌练习：显示歌曲的标准音高线和你唱的线，实时打分，录音可导出分析。纯前端，不上传任何声音。" />
 <link rel="stylesheet" href="style.css?v=8" />
-<link rel="stylesheet" href="karaoke.css?v=8" />
+<link rel="stylesheet" href="karaoke.css?v=9" />
 </head>
 <body>
 
@@ -50,6 +50,28 @@
       <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词（在②曲线下方）</label>
     </div>
     <div id="audioBox" class="lib-player"></div>
+    <div class="kara-settings">
+      <div class="kara-settings-head">🎚 提取设置 / 说明</div>
+      <p id="songInfo" class="status">在下面曲库里点一首歌；播放器、开始唱歌和提取进度都在这里。</p>
+      <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
+        💡 <b>线更准的秘诀</b>：有 <code>xxx.vocals.mp3</code>（Demucs 人声分离版）时，
+        <b>参考线从人声版提取</b>（干净），<b>播放的却是完整伴奏版</b> —— 两边自动配对。
+        没有分离版时就用完整版直接估线（伴奏一满可能被带跑，这时调下面的人声范围 / 滤波）。
+      </p>
+      <p class="muted small">
+        ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把伴奏一起收进去。<br>
+        ⚠️ 网易云下载的 <b>.ncm</b> 是加密格式，浏览器解不了，先用 <code>tools/ncmdump.js</code> 转成 mp3。
+      </p>
+      <div class="row wrap">
+        <label class="field">人声范围（提取旋律用）
+          <select id="vocalSel" class="mini-select"></select>
+        </label>
+        <label class="field checkbox"><input id="vocalBandChk" type="checkbox" checked /> 人声滤波（滤掉贝斯/鼓）</label>
+        <span class="muted small">线跟着贝斯跑了就调这里</span>
+      </div>
+      <div id="refProgress" class="muted small"></div>
+      <div id="freeResult" class="prac-result"></div>
+    </div>
     <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
   </section>
 
@@ -97,7 +119,7 @@
     <div class="card-head">
       <h2>③ 成绩单</h2>
       <div class="row wrap">
-        <button id="playRecBtn" class="btn btn-sm">🎧 回听刚才唱的</button>
+        <button id="playRecBtn" class="btn btn-sm">🎧 回听刚才唱的（自动配伴奏）</button>
         <button id="saveRecBtn" class="btn btn-primary btn-sm">💾 保存这一段到文件夹</button>
         <button id="exportBtn" class="btn btn-ghost btn-sm">导出 JSON</button>
         <button id="csvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
@@ -124,37 +146,16 @@
       建议设成 <code>C:\CloudMusic\recordings</code> 这样的目录：点一次「📁 选择记录文件夹」，
       音准页保存的音域记录和这里的 K 歌记录都会写进同一个文件夹。唱完自动生成
       <code>karaoke-歌名-时间.json</code>（音高数据+成绩）和 <code>.webm</code>（你自己的录音）。
-      浏览器里只留最近一条录音（够回听），**不会占用大量空间**；
+      浏览器里只留最近一条录音（已存盘的会直接从记录文件夹读取回放），**不会占用大量空间**；
       这些文件都在你的硬盘上，<b>不会上传、也永远不会进 GitHub 仓库</b>。
     </p>
+    <p id="recPlayInfo" class="muted small"></p>
     <div id="recList" class="rec-list"><p class="muted small">还没有练习记录。唱一段并停下，这里会自动留下你的成绩和录音（可回听）。</p></div>
     <p class="muted small">想把某一段发我分析：点 <b>💾 保存这一段到文件夹</b>（写到你选的文件夹，比如 <code>C:\CloudMusic\recordings</code>），
       然后把 <code>karaoke-*.json</code>（和 <code>.webm</code> 录音）发我。</p>
   </section>
 
-  <!-- ===== 播放器 / 提取设置 ===== -->
-  <section class="card card--wide">
-    <div class="card-head"><h2>④ 提取设置 / 说明</h2></div>
-    <p id="songInfo" class="status">在①的曲库里点一首歌，播放器和开始唱歌按钮都在①。</p>
-    <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
-      💡 <b>线更准的秘诀</b>：有 <code>xxx.vocals.mp3</code>（Demucs 人声分离版）时，
-      <b>参考线从人声版提取</b>（干净），<b>播放的却是完整伴奏版</b> —— 两边自动配对。
-      没有分离版时就用完整版直接估线（伴奏一满可能被带跑，这时调下面的人声范围 / 滤波）。
-    </p>
-    <p class="muted small">
-      ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把伴奏一起收进去。<br>
-      ⚠️ 网易云下载的 <b>.ncm</b> 是加密格式，浏览器解不了，先用 <code>tools/ncmdump.js</code> 转成 mp3。
-    </p>
-    <div class="row wrap">
-      <label class="field">人声范围（提取旋律用）
-        <select id="vocalSel" class="mini-select"></select>
-      </label>
-      <label class="field checkbox"><input id="vocalBandChk" type="checkbox" checked /> 人声滤波（滤掉贝斯/鼓）</label>
-      <span class="muted small">线跟着贝斯跑了就调这里</span>
-    </div>
-    <div id="refProgress" class="muted small"></div>
-    <div id="freeResult" class="prac-result"></div>
-  </section>
+
 
   <!-- ===== 怎么用 ===== -->
   <section class="card card--wide">
@@ -197,10 +198,10 @@
 </footer>
 
 <script src="js/pitch.js?v=8"></script>
-<script src="js/karaoke.js?v=8"></script>
-<script src="js/library.js?v=8"></script>
+<script src="js/karaoke.js?v=9"></script>
+<script src="js/library.js?v=9"></script>
 <script src="js/record-folder.js?v=8"></script>
-<script src="js/record.js?v=8"></script>
+<script src="js/record.js?v=9"></script>
 <script>
   /* 兜底提示：如果曲库模块没加载成功（浏览器缓存了旧版本 / 网络问题），
      直接明确告诉用户，而不是"点了没反应"。 */

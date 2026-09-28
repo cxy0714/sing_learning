@@ -180,6 +180,13 @@
       createdAt: new Date().toISOString(),
       song: data.song || '',
       refSource: data.refSource || '',
+      songKey: data.songMeta ? data.songMeta.key : '',
+      artist: data.songMeta ? data.songMeta.artist : '',
+      title: data.songMeta ? data.songMeta.title : '',
+      audioName: data.songMeta ? data.songMeta.audioName : '',
+      vocalsName: data.songMeta ? data.songMeta.vocalsName : '',
+      accompName: data.songMeta ? data.songMeta.accompName : '',
+      folder: data.songMeta ? data.songMeta.folder : '',
       a4: data.a4,
       range: data.range,
       durationMs: data.durationMs || 0,
@@ -309,8 +316,9 @@
           '<span class="muted small">' + fmtTime(r.createdAt) + (r.savedTo ? ' · 💾已存盘' : '') + ' · 唱到 ' + r.sungCount + '/' + r.totalNotes +
           ' 段 · 平均|偏差| ' + (r.avgAbs === null ? '—' : r.avgAbs) + ' 音分</span></div>' +
           '<div class="rec-score ' + cls + '">' + sc + '<i>分</i></div>' +
-          '<div class="row">' +
-            (r.audio ? '<button class="btn btn-ghost btn-sm" data-act="play" data-id="' + r.id + '">🎧 回听</button>' : '') +
+          '<div class="row wrap rec-actions">' +
+            ((r.audio || r.savedTo) ? '<button class="btn btn-ghost btn-sm" data-act="play" data-id="' + r.id + '">🎧 录音+伴奏</button>' +
+              '<button class="btn btn-ghost btn-sm" data-act="orig" data-id="' + r.id + '">🎤 原唱版</button>' : '') +
             '<button class="btn btn-ghost btn-sm" data-act="save" data-id="' + r.id + '">💾 存文件夹</button>' +
             '<button class="btn btn-ghost btn-sm" data-act="json" data-id="' + r.id + '">JSON</button>' +
             '<button class="btn btn-ghost btn-sm danger" data-act="del" data-id="' + r.id + '">删</button>' +
@@ -324,21 +332,149 @@
   }
 
   function byId(id) { return all().then(function (l) { return l.filter(function (r) { return r.id === id; })[0]; }); }
+  function getRecordAudio(r) {
+    if (r.audio) return Promise.resolve(r.audio);
+    if (!r.savedTo || !S.dir) return Promise.resolve(null);
+    return hasPermission().then(function (ok) {
+      if (!ok) return null;
+      return S.dir.getFileHandle(r.savedTo + '.webm').then(function (fh) {
+        return fh.getFile();
+      }).catch(function () { return null; });
+    }).catch(function () { return null; });
+  }
 
-  function play(id) {
+  /* ---------- 混合回放：录音 + 伴奏 / 原唱 ---------- */
+  var mixPlayers = [], mixTimer = null, playingId = null, playingMode = null;
+
+  function setPlayStatus(msg) {
+    var el = $('recPlayInfo');
+    if (el) el.innerHTML = msg || '';
+    onStatus(msg || '');
+  }
+  function stopMix() {
+    if (mixTimer) { clearTimeout(mixTimer); mixTimer = null; }
+    mixPlayers.forEach(function (a) {
+      try { a.pause(); } catch (e) {}
+      try { if (a._url) URL.revokeObjectURL(a._url); } catch (e) {}
+      try { a.removeAttribute('src'); a.load(); } catch (e) {}
+    });
+    mixPlayers = [];
+    playingId = null; playingMode = null;
+  }
+  function makeMixTrack(file, volume) {
+    var url = URL.createObjectURL(file);
+    var a = document.createElement('audio');
+    a.preload = 'auto';
+    a.src = url;
+    a.volume = volume;
+    a.style.display = 'none';
+    a._url = url;
+    document.body.appendChild(a);
+    mixPlayers.push(a);
+    return a;
+  }
+  function whenReady(a) {
+    return new Promise(function (resolve) {
+      if (a.readyState >= 3) return resolve();
+      var timer = setTimeout(finish, 2500);
+      function finish() {
+        clearTimeout(timer);
+        a.removeEventListener('canplaythrough', finish);
+        a.removeEventListener('loadeddata', finish);
+        a.removeEventListener('error', finish);
+        resolve();
+      }
+      a.addEventListener('canplaythrough', finish);
+      a.addEventListener('loadeddata', finish);
+      a.addEventListener('error', finish);
+      a.load();
+    });
+  }
+  function pauseDryPlayer() {
+    var d = $('recPlayer');
+    if (d) { try { d.pause(); } catch (e) {} }
+  }
+  function playDry(r, audio, msg) {
+    var box = $('recPlayer') || (function () {
+      var d = document.createElement('audio');
+      d.id = 'recPlayer'; d.controls = true; d.className = 'audio-player';
+      var host = $('recList'); if (host) host.parentNode.insertBefore(d, host);
+      return d;
+    })();
+    if (box._url) URL.revokeObjectURL(box._url);
+    box._url = URL.createObjectURL(audio);
+    box.src = box._url;
+    var p = box.play();
+    if (p && p.catch) p.catch(function () {});
+    setPlayStatus(msg || ('🎧 正在回放：' + (r.song || '') + '（' + fmtTime(r.createdAt) + '）'));
+  }
+  function playMixed(r, audio, song, files, mode) {
+    var hasAccomp = !!files.accomp;
+    var hasOriginalStem = !!(hasAccomp && files.vocals);
+    var useFullForOriginal = (mode === 'original') && !hasOriginalStem && !!files.audio;
+    if (mode === 'original' && !hasOriginalStem && !useFullForOriginal) mode = 'voice';
+    var backing = useFullForOriginal ? files.audio : (files.accomp || files.audio);
+    if (!backing) { playDry(r, audio, '这首没有找到伴奏/完整版，先只回放你的录音。'); return; }
+    var recVol, backVol;
+    if (mode === 'original') {
+      if (useFullForOriginal) { recVol = 0.35; backVol = 1; }
+      else { recVol = 0.45; backVol = 0.35; }
+    } else {
+      recVol = 1;
+      backVol = hasAccomp ? 0.85 : 0.45;
+    }
+    pauseDryPlayer();
+    var players = [];
+    players.push(makeMixTrack(audio, recVol));
+    players.push(makeMixTrack(backing, backVol));
+    if (mode === 'original' && hasOriginalStem) players.push(makeMixTrack(files.vocals, 1));
+    playingId = r.id; playingMode = mode;
+    var label = mode === 'original'
+      ? (hasOriginalStem ? '伴奏 + 原唱（原唱声音更大）' : '完整版（原唱 + 伴奏）')
+      : (hasAccomp ? '我的录音 + 伴奏' : '我的录音 + 完整版（可能带原唱）');
+    setPlayStatus('🎧 正在回放：' + (r.song || '') + ' · ' + label + '（再点一次停止）');
+    Promise.all(players.map(whenReady)).then(function () {
+      return Promise.all(players.map(function (a) {
+        var p = a.play();
+        return p && p.catch ? p.catch(function () {}) : Promise.resolve();
+      }));
+    }).then(function () {
+      players[0].addEventListener('ended', function () {
+        if (playingId === r.id) { stopMix(); setPlayStatus('回放结束。'); }
+      });
+    }).catch(function (e) {
+      stopMix();
+      playDry(r, audio, '播放失败，先只回放你的录音：' + (e && e.message ? e.message : e));
+    });
+  }
+  function play(id, mode) {
+    mode = mode || 'voice';
     byId(id).then(function (r) {
-      if (!r || !r.audio) return;
-      var box = $('recPlayer') || (function () {
-        var d = document.createElement('audio');
-        d.id = 'recPlayer'; d.controls = true; d.className = 'audio-player';
-        var host = $('recList'); if (host) host.parentNode.insertBefore(d, host);
-        return d;
-      })();
-      if (box._url) URL.revokeObjectURL(box._url);
-      box._url = URL.createObjectURL(r.audio);
-      box.src = box._url;
-      box.play();
-      onStatus('🎧 正在回放：' + (r.song || '') + '（' + fmtTime(r.createdAt) + '）');
+      if (!r) { setPlayStatus('找不到这条练习记录。'); return; }
+      getRecordAudio(r).then(function (audio) {
+        if (!audio) { setPlayStatus('这条记录没有可播放的录音（如果已存盘，请先在③设置记录文件夹并授权）。'); return; }
+        if (playingId === id && playingMode === mode) {
+          pauseDryPlayer(); stopMix(); setPlayStatus('已停止回放。'); return;
+        }
+        stopMix();
+        var SL = window.SongLibrary;
+        if (!SL || !SL.findSong) { playDry(r, audio, '曲库模块还没准备好，先只回放你的录音。'); return; }
+        var ready = SL.ensureReady ? SL.ensureReady() : Promise.resolve(!!SL.findSong(r));
+        ready.then(function (ok) {
+          if (!ok) { playDry(r, audio, '曲库还没载入：先在①授权/扫描音乐文件夹，再回来；现在先只回放你的录音。'); return; }
+          var song = SL.findSong(r);
+          if (!song) { playDry(r, audio, '曲库里找不到这条记录对应的歌，先只回放你的录音。'); return; }
+          SL.getTracks(song).then(function (files) {
+            playMixed(r, audio, song, files, mode);
+          }).catch(function (e) {
+            playDry(r, audio, '伴奏读取失败，先只回放你的录音：' + (e && e.message ? e.message : e));
+          });
+        }).catch(function (e) {
+          playDry(r, audio, '曲库准备失败，先只回放你的录音：' + (e && e.message ? e.message : e));
+        });
+      }).catch(function (e) {
+        setPlayStatus('读取录音失败：' + (e && e.message ? e.message : e));
+      });
     });
   }
 
@@ -350,7 +486,8 @@
         var b = e.target.closest ? e.target.closest('button[data-act]') : null;
         if (!b) return;
         var id = b.dataset.id, act = b.dataset.act;
-        if (act === 'play') play(id);
+        if (act === 'play') play(id, 'voice');
+        else if (act === 'orig') play(id, 'original');
         else if (act === 'save') byId(id).then(function (r) { if (r) saveToFolder(r); });
         else if (act === 'json') byId(id).then(function (r) { if (r) download('karaoke-' + safe(r.song) + '-' + stamp() + '.json', JSON.stringify(exportObj(r), null, 1), 'application/json'); });
         else if (act === 'del') del(id).then(render);
@@ -371,9 +508,9 @@
     if (pb) pb.addEventListener('click', function () {
       all().then(function (l) {
         l.sort(function (a, b) { return b.createdAt.localeCompare(a.createdAt); });
-        var withAudio = l.filter(function (r) { return r.audio; });
+        var withAudio = l.filter(function (r) { return r.audio || r.savedTo; });
         if (!withAudio.length) { onStatus('还没有带录音的记录（这一版才开始录音，之前唱的没有音频）。'); return; }
-        play(withAudio[0].id);
+        play(withAudio[0].id, 'voice');
       });
     });
     var sb = $('saveRecBtn');

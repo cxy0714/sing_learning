@@ -168,6 +168,16 @@
   }
 
   var S = { songs: [], all: [], stats: null, dirName: '', mode: '', lastKey: null, restorable: null, vocalsOnly: false };
+  var restoreFinished = false, restoreWaiters = [];
+  function markRestoreFinished() {
+    restoreFinished = true;
+    restoreWaiters.splice(0).forEach(function (fn) { fn(S.all.length > 0); });
+  }
+  function whenRestoreReady() {
+    if (S.all.length) return Promise.resolve(true);
+    if (restoreFinished) return Promise.resolve(false);
+    return new Promise(function (resolve) { restoreWaiters.push(resolve); });
+  }
 
   function wire() {
     var pick = $('libPickDir'), files = $('libFiles'), rescan = $('libRescan'), search = $('libSearch'), artistSel = $('libArtist'), voc = $('libVocals'), vocOnly = $('libVocalsOnly'), list = $('libList');
@@ -216,33 +226,46 @@
   function rescanDir() { if (S.handle) scanAndApply(S.handle); }
 
   function tryRestore() {
-    if (typeof indexedDB === 'undefined' || !window.showDirectoryPicker) return;
+    if (typeof indexedDB === 'undefined' || !window.showDirectoryPicker) { markRestoreFinished(); return; }
     idbGet('musicDir').then(function (h) {
-      if (!h) return;
-      if (!h.queryPermission) return;
+      if (!h) { markRestoreFinished(); return; }
+      if (!h.queryPermission) { markRestoreFinished(); return; }
       return h.queryPermission({ mode: 'read' }).then(function (st) {
-        if (st === 'granted') { S.mode = 'dir'; S.dirName = h.name; S.handle = h; scanAndApply(h); }
-        else {
-          S.restorable = h;
-          info('上次的文件夹：<b>' + h.name + '</b> <button id="libRestore" class="btn btn-ghost btn-sm">继续使用（点一下授权）</button>');
-          var b = $('libRestore');
-          if (b) b.addEventListener('click', function () {
-            h.requestPermission({ mode: 'read' }).then(function (st2) {
-              if (st2 === 'granted') { S.mode = 'dir'; S.dirName = h.name; S.handle = h; scanAndApply(h); }
-              else info('没拿到授权，请重新选择文件夹。');
-            });
-          });
+        if (st === 'granted') {
+          S.mode = 'dir'; S.dirName = h.name; S.handle = h;
+          return scanAndApply(h);
         }
+        S.restorable = h;
+        info('上次的文件夹：<b>' + h.name + '</b> <button id="libRestore" class="btn btn-ghost btn-sm">继续使用（点一下授权）</button>');
+        var b = $('libRestore');
+        if (b) b.addEventListener('click', function () {
+          h.requestPermission({ mode: 'read' }).then(function (st2) {
+            if (st2 === 'granted') {
+              S.mode = 'dir'; S.dirName = h.name; S.handle = h;
+              scanAndApply(h);
+            } else {
+              info('没拿到授权，请重新选择文件夹。');
+              markRestoreFinished();
+            }
+          });
+        });
+        markRestoreFinished();
       });
-    }).catch(function () {});
+    }).catch(function () { markRestoreFinished(); });
   }
 
   function scanAndApply(handle) {
     info('正在扫描 <b>' + handle.name + '</b> …（只读你的文件，不上传）');
     var items = [];
-    walk(handle, '', items).then(function () {
+    return walk(handle, '', items).then(function () {
       apply(items);
-    }).catch(function (e) { info('扫描失败：' + (e && e.message ? e.message : e)); });
+      markRestoreFinished();
+      return true;
+    }).catch(function (e) {
+      info('扫描失败：' + (e && e.message ? e.message : e));
+      markRestoreFinished();
+      return false;
+    });
   }
 
   function walk(dir, rel, out) {
@@ -344,9 +367,12 @@
     ]).then(function (r) {
       S.lastKey = s.key;
       render();
-      K.load(r[0], r[1], r[2]);
-      var sr = document.getElementById('syncRecBtn');
-      if (sr) sr.disabled = false;
+      K.load(r[0], r[1], r[2], {
+        key: s.key, artist: s.artist, title: s.title, titleRaw: s.titleRaw, folder: s.folder,
+        audioName: (s.audio && s.audio.name) || (s.vocals && s.vocals.name) || '',
+        vocalsName: s.vocals ? s.vocals.name : '',
+        accompName: s.accomp ? s.accomp.name : ''
+      });
       info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>'
         + (r[2] ? '：播放的是<b>完整伴奏版</b>，参考线来自<b>人声分离版</b>（线更干净）。' : '：参考线直接从这首歌里估。')
         + '<br>准备好就点 <b>「🎤 开始唱歌」</b> —— <b>随时可以停</b>，按你唱到的部分算分。');
@@ -355,6 +381,61 @@
     });
   }
 
+  function findSong(rec) {
+    if (!rec || !S.all || !S.all.length) return null;
+    var i, j, k, s;
+    if (rec.songKey) {
+      for (i = 0; i < S.all.length; i++) if (S.all[i].key === rec.songKey) return S.all[i];
+    }
+    var names = [rec.audioName, rec.vocalsName, rec.accompName, rec.song];
+    function hasName(song) {
+      var ns = [song.audio && song.audio.name, song.vocals && song.vocals.name, song.accomp && song.accomp.name];
+      for (j = 0; j < names.length; j++) {
+        if (!names[j]) continue;
+        for (k = 0; k < ns.length; k++) if (ns[k] && ns[k] === names[j]) return true;
+      }
+      return false;
+    }
+    for (i = 0; i < S.all.length; i++) if (hasName(S.all[i])) return S.all[i];
+    var artist = rec.artist || '';
+    var title = rec.title || '';
+    if (!title && rec.song) {
+      var p = parseSongName(String(rec.song).replace(/\.[^.]+$/, ''));
+      title = stripCopySuffix(p.title);
+      if (!artist) artist = p.artist;
+    }
+    if (title) {
+      for (i = 0; i < S.all.length; i++) {
+        s = S.all[i];
+        if (s.title === title && (!artist || artist === '未知歌手' || s.artist === artist)) return s;
+      }
+      for (i = 0; i < S.all.length; i++) if (S.all[i].title === title) return S.all[i];
+    }
+    return null;
+  }
+  function getTrackFile(entry) {
+    if (!entry || !entry.getFile) return Promise.resolve(null);
+    return entry.getFile().catch(function () { return null; });
+  }
+  function getTracks(song) {
+    if (!song) return Promise.resolve({ audio: null, vocals: null, accomp: null });
+    return Promise.all([
+      getTrackFile(song.audio),
+      getTrackFile(song.vocals),
+      getTrackFile(song.accomp)
+    ]).then(function (files) {
+      return { audio: files[0], vocals: files[1], accomp: files[2] };
+    });
+  }
+  function ensureReady() {
+    if (S.all.length) return Promise.resolve(true);
+    if (!restoreFinished) return whenRestoreReady();
+    if (S.handle) return scanAndApply(S.handle);
+    return Promise.resolve(false);
+  }
+  window.SongLibrary.findSong = findSong;
+  window.SongLibrary.getTracks = getTracks;
+  window.SongLibrary.ensureReady = ensureReady;
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   else wire();
 })();

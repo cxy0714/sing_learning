@@ -49,7 +49,7 @@
     a4: 440, rangeLow: 45, rangeHigh: 69,
     /* 歌：目标线来自"从音频里估出来的旋律"（S.refTrack / S.refSegs）*/
     notes: [], totalMs: 0,
-    audioName: '', usedVocalsStem: false,
+    audioName: '', refSourceName: null, songMeta: null, usedVocalsStem: false,
     /* 播放 */
     mode: '', t0Perf: 0, songPos: -9999,
     /* 采集 */
@@ -799,12 +799,13 @@
    *   lrcFile —— 可选歌词
    *   refFile —— 可选：用来【提取参考旋律线】的音频（一般传人声分离版的 vocals）
    */
-  function loadAudioFile(f, lrcFile, refFile) {
+  function loadAudioFile(f, lrcFile, refFile, meta) {
     S.karaAxis = null;
     S.mode = 'free';
     S.songPos = 0;
     S.audioName = f.name;
     S.refSourceName = (refFile && refFile !== f) ? refFile.name : null;
+    S.songMeta = meta || null;
 
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
@@ -1293,7 +1294,7 @@
       }
       if (window.KaraokeRec && S.samples.length > 30) {
         KaraokeRec.save({
-          song: S.audioName, refSource: S.refSourceName, a4: S.a4,
+          song: S.audioName, refSource: S.refSourceName, songMeta: S.songMeta, a4: S.a4,
           range: { low: S.rangeLow, high: S.rangeHigh },
           durationMs: S.samples[S.samples.length - 1].t,
           result: S.result,

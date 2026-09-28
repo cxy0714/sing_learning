@@ -119,3 +119,13 @@
 .rec-score.warn { color: var(--warn); }
 .rec-score.bad { color: var(--bad); }
 @media (max-width: 700px) { .rec-item { grid-template-columns: 1fr auto; } .rec-main { grid-column: 1 / -1; } }
+
+/* 融合到①的提取设置 / 说明 */
+.kara-settings { margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(43, 55, 87, .8); }
+.kara-settings-head { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: #dbe6ff; }
+.kara-settings #freeResult:empty { display: none; }
+
+/* K歌记录里的回放按钮 */
+.rec-actions { justify-content: flex-end; }
+@media (max-width: 700px) { .rec-actions { grid-column: 1 / -1; justify-content: flex-start; } }
+#recPlayInfo:empty { display: none; }
