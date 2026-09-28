@@ -281,8 +281,8 @@ style.css        两个页面共用的样式
 karaoke.css      K歌页专用样式
 js/pitch.js      音高检测（YIN 算法）+ 音名/唱名换算，无依赖
 js/app.js        音准检测页逻辑
-js/songs.js      K歌曲库（公有领域旋律，音符序列）
-js/karaoke.js    K歌页逻辑：时间轴、移调、合成播放、打分、导出
+
+js/karaoke.js    K歌页逻辑：音频提取、同步跟唱、打分、导出
 js/library.js    本地曲库：文件夹授权、扫描整理、按歌手/歌名搜索、点歌即唱
 serve.js         本地预览服务器（node serve.js → http://localhost:8000）
 tools/ncmdump.js          .ncm → mp3/flac 转换工具（JavaScript 重写自 MIT 项目 taurusxin/ncmdump）
