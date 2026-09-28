@@ -48,6 +48,7 @@
       <span id="audioName" class="muted small">还没有选歌</span>
       <label class="field checkbox"><input id="lrcChk" type="checkbox" checked /> 显示歌词</label>
     </div>
+    <div id="audioBox" class="lib-player"></div>
     <div id="libList" class="lib-list"><p class="muted small">曲库是空的：点上面的「📁 选择音乐文件夹」，指向 <code>C:\CloudMusic</code> 就行。</p></div>
   </section>
 
@@ -111,9 +112,8 @@
 
   <!-- ===== 播放器 / 提取设置 ===== -->
   <section class="card card--wide">
-    <div class="card-head"><h2>④ 播放器 / 提取设置</h2></div>
-    <p id="songInfo" class="status">在①的曲库里点一首歌，就会载入到这里。</p>
-    <div id="audioBox"></div>
+    <div class="card-head"><h2>④ 提取设置 / 说明</h2></div>
+    <p id="songInfo" class="status">在①的曲库里点一首歌，播放器和开始唱歌按钮都在①。</p>
     <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
       💡 <b>线更准的秘诀</b>：有 <code>xxx.vocals.mp3</code>（Demucs 人声分离版）时，
       <b>参考线从人声版提取</b>（干净），<b>播放的却是完整伴奏版</b> —— 两边自动配对。

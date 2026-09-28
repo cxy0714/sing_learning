@@ -93,3 +93,8 @@
   .lib-item { grid-template-columns: 1fr auto; }
   .lib-artist, .tag-d { display: none; }
 }
+/* 曲库里的播放器 */
+.lib-player { margin-top: 4px; }
+.lib-player:empty { display: none; }
+.lib-player .audio-player { width: 100%; }
+.lib-actions { margin-top: 6px; padding-top: 8px; border-top: 1px dashed rgba(43, 55, 87, .8); }
