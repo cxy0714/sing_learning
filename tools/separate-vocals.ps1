@@ -49,14 +49,16 @@ $tmp = Join-Path $env:TEMP ('demucs-' + [guid]::NewGuid().ToString('N').Substrin
 foreach ($f in $files) {
   Write-Host ("`n▶ " + $f.Name) -ForegroundColor Yellow
   $t0 = Get-Date
-  & $py -m demucs --two-stems=vocals -n $Model -o $tmp $f.FullName
+  $tmpOne = Join-Path $tmp ('s' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  & $py -m demucs --two-stems=vocals -n $Model -o $tmpOne $f.FullName
   if ($LASTEXITCODE -ne 0) { Write-Warning "分离失败：$($f.Name)"; continue }
   # demucs 输出在 <tmp>\<model>\<曲名>\vocals.wav，直接按文件名递归找最稳
-  $vf = Get-ChildItem $tmp -Recurse -File -Filter 'vocals.wav' | Select-Object -First 1
-  $nf = Get-ChildItem $tmp -Recurse -File -Filter 'no_vocals.wav' | Select-Object -First 1
-  if (-not $vf) { Write-Warning "找不到 vocals.wav：$($f.Name)"; continue }
-  $v = $vf.FullName
-  $n = if ($nf) { $nf.FullName } else { $null }
+  # 每首歌单独一个临时目录 —— 否则递归搜索会一直拿到"第一首"的结果（曾踩过这个坑）
+  $outDir = Get-ChildItem $tmpOne -Recurse -File -Filter 'vocals.wav' | Select-Object -First 1
+  $outDir2 = Get-ChildItem $tmpOne -Recurse -File -Filter 'no_vocals.wav' | Select-Object -First 1
+  if (-not $outDir) { Write-Warning "找不到 vocals.wav：$($f.Name)"; Remove-Item $tmpOne -Recurse -Force -ErrorAction SilentlyContinue; continue }
+  $v = $outDir.FullName
+  $n = if ($outDir2) { $outDir2.FullName } else { $null }
   $base = Join-Path $Out $f.BaseName
   if ($KeepWav) {
     Copy-Item $v "$base.vocals.wav" -Force
