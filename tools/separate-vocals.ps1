@@ -11,6 +11,8 @@
   用法：
     powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\CloudMusic\周华健 - 难念的经.mp3"
     powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\CloudMusic" -Out "C:\CloudMusic\vocals"
+    # 重复跑一个目录时加 -SkipExisting：已经有 .vocals.mp3 的会自动跳过
+    powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\CloudMusic" -Out "C:\CloudMusic\vocals" -SkipExisting
 
   输出： <Out>\<原文件名>.vocals.mp3      ← 在 K歌页④里当音频选它，音高线就干净了
          <Out>\<原文件名>.no_vocals.mp3  ← 伴奏（可以当自己的 K 歌伴奏）
@@ -26,7 +28,8 @@ param(
   [string]$Out = "",
   [string]$Model = "htdemucs",
   [int]$Bitrate = 192,
-  [switch]$KeepWav
+  [switch]$KeepWav,
+  [switch]$SkipExisting
 )
 $ErrorActionPreference = 'Stop'
 $envDir = Join-Path $env:USERPROFILE '.demucs-env'
@@ -47,6 +50,11 @@ New-Item -ItemType Directory -Force -Path $Out | Out-Null
 Write-Host "共 $($files.Count) 个文件 → 输出到 $Out" -ForegroundColor Cyan
 $tmp = Join-Path $env:TEMP ('demucs-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 foreach ($f in $files) {
+  $base = Join-Path $Out $f.BaseName
+  if ($SkipExisting) {
+    $exists = if ($KeepWav) { Test-Path ($base + '.vocals.wav') } else { Test-Path ($base + '.vocals.mp3') }
+    if ($exists) { Write-Host ("  ↩ 已存在，跳过：" + $f.Name) -ForegroundColor DarkGray; continue }
+  }
   Write-Host ("`n▶ " + $f.Name) -ForegroundColor Yellow
   $t0 = Get-Date
   $tmpOne = Join-Path $tmp ('s' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -59,7 +67,6 @@ foreach ($f in $files) {
   if (-not $outDir) { Write-Warning "找不到 vocals.wav：$($f.Name)"; Remove-Item $tmpOne -Recurse -Force -ErrorAction SilentlyContinue; continue }
   $v = $outDir.FullName
   $n = if ($outDir2) { $outDir2.FullName } else { $null }
-  $base = Join-Path $Out $f.BaseName
   if ($KeepWav) {
     Copy-Item $v "$base.vocals.wav" -Force
     Copy-Item $n "$base.no_vocals.wav" -Force

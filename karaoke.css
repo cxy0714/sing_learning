@@ -86,6 +86,7 @@
 .lib-tags { display: flex; gap: 4px; flex-wrap: nowrap; }
 .tag { font-size: 10.5px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .tag-v { color: #4ade80; border-color: #2c5a42; }
+.lib-vocals-only.on { color: #a7f3d0; border-color: #2c5a42; background: rgba(74,222,128,.16); }
 .tag-l { color: #60a5fa; border-color: #2c4170; }
 .tag-d { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 .lib-go { color: var(--accent-2); font-weight: 700; white-space: nowrap; }

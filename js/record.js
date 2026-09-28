@@ -63,25 +63,31 @@
 
   function loadPrefs() {
     try { S.auto = localStorage.getItem('vpm.recAuto') !== '0'; } catch (e) { S.auto = true; }
-    return kvGet('recDir').then(function (h) { if (h) S.dir = h; renderFolder(); updateUsage(); })
+    var read = (window.RecordFolder && window.RecordFolder.load)
+      ? window.RecordFolder.load().then(function (h) { S.dir = h || null; return h; })
+      : kvGet('recDir').then(function (h) { if (h) S.dir = h; return h; });
+    return read.then(function () { renderFolder(); updateUsage(); })
       .catch(function () { renderFolder(); updateUsage(); });
   }
   function renderFolder() {
     var el = $('recFolderName');
-    if (el) el.textContent = S.dir ? ('保存文件夹：' + S.dir.name) : '还没设保存文件夹 —— 设一个，唱完直接写你硬盘，不占浏览器空间';
+    if (el) el.textContent = S.dir ? ('记录文件夹：' + S.dir.name + '（音域记录也写这里）') : '还没设记录文件夹 —— 设一个，音域和 K 歌记录一起写进硬盘，两个页面共用';
     var chk = $('recAutoChk'); if (chk) chk.checked = S.auto;
     var b = $('recFolderBtn');
-    if (b) b.textContent = S.dir ? '📁 更换文件夹' : '📁 选择保存文件夹';
+    if (b) b.textContent = S.dir ? '📁 更换记录文件夹' : '📁 选择记录文件夹';
   }
   function setFolder() {
     if (!window.showDirectoryPicker) { onStatus('这个浏览器不能直接写文件夹（用 Chrome/Edge），可以先用「JSON」按钮下载。'); return; }
-    window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+    var p = (window.RecordFolder && window.RecordFolder.pick)
+      ? window.RecordFolder.pick()
+      : window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+          return kvPut('recDir', h).then(function () { return h; });
+        });
+    p.then(function (h) {
       S.dir = h;
-      return kvPut('recDir', h).then(function () {
-        renderFolder(); updateUsage();
-        onStatus('✅ 保存文件夹已设为 <b>' + h.name + '</b>：以后唱完自动把 <code>karaoke-*.json</code> + 录音 <code>.webm</code> 写进去。');
-      });
-    }).catch(function (e) { if (e && e.name !== 'AbortError') onStatus('设置文件夹失败：' + (e.message || e)); });
+      renderFolder(); updateUsage();
+      onStatus('✅ 记录文件夹已设为 <b>' + h.name + '</b>：以后唱完自动写 <code>karaoke-*.json</code> + 录音 <code>.webm</code>；音准页的音域记录也写这里。');
+    }).catch(function (e) { if (e && e.name !== 'AbortError') onStatus('设置记录文件夹失败：' + (e.message || e)); });
   }
   function hasPermission() {
     if (!S.dir) return Promise.resolve(false);
@@ -251,9 +257,13 @@
       .then(function (w) { return w.write(data).then(function () { return w.close(); }); });
   }
   function pickDir() {
-    return window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+    var p = (window.RecordFolder && window.RecordFolder.pick)
+      ? window.RecordFolder.pick()
+      : window.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+          return kvPut('recDir', h).then(function () { return h; });
+        });
+    return p.then(function (h) {
       S.dir = h;
-      kvPut('recDir', h);
       renderFolder();
       return h;
     });
@@ -333,6 +343,7 @@
   }
 
   function wire() {
+    loadPrefs();
     var box = $('recList');
     if (box) {
       box.addEventListener('click', function (e) {

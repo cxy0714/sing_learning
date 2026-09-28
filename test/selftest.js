@@ -281,6 +281,22 @@ sec('2. K歌提取与打分');
     chk(T.voiceText(60, 84).indexOf('女高音') >= 0, 'C4–C6 → 女高音', T.voiceText(60, 84));
     T.renderRangeLog();
     chk(String(dom2.els['rangeBody']._html).indexOf('半音') >= 0, '音域表格渲染正常');
+
+    /* 抖动/假音过滤：喂 8 帧"频率乱跳"的音，不应该被记进音域 */
+    sb2.localStorage.setItem('vpm.range.v1', '{}');
+    S.hold = { midi: null, n: 0, sum: 0, min: 0, max: 0, conf: 0, rms: 0 };
+    let ts2 = 60000;
+    function feed(freq, amp) {
+      for (let i = 0; i < 2048; i++) SA.buf[i] = (amp === undefined ? 0.25 : amp) * Math.sin(2 * Math.PI * freq * i / 48000);
+      ts2 += 100; T.loop(ts2);
+    }
+    for (let k = 0; k < 10; k++) feed(k % 2 ? 300 : 900);      // 疯狂抖动：300/900Hz 交替
+    let lg2 = JSON.parse(sb2.localStorage.getItem('vpm.range.v1'));
+    chk(!Object.keys(lg2).length, '抖动严重的音不会被记进音域', Object.keys(lg2).length + ' 天记录');
+    for (let k = 0; k < 10; k++) feed(392);                    // 稳稳唱 sol4
+    lg2 = JSON.parse(sb2.localStorage.getItem('vpm.range.v1'));
+    const d2 = lg2[Object.keys(lg2)[0]];
+    chk(d2 && d2.low === 67 && d2.high === 67, '稳定唱住的音会被记进音域', d2 ? (d2.low + '~' + d2.high) : '无');
   }
   /* ============================================================ */
   /*  4. 本地曲库（扫描 / 搜索 / 合并）                              */
@@ -321,6 +337,9 @@ sec('2. K歌提取与打分');
     chk(SL.filterCatalog(cat.songs, '难念').length === 1, '按歌名搜索');
     chk(SL.filterCatalog(cat.songs, '周华健 难念').length === 1, '多关键词搜索');
     chk(SL.filterCatalog(cat.songs, 'zzz不存在').length === 0, '搜不到就返回空');
+    const vocOnlySongs = SL.filterCatalog(cat.songs, '', '__all__', true);
+    chk(vocOnlySongs.length === 1 && vocOnlySongs.every(s => !!s.vocals), '只看有人声分离版过滤正确', vocOnlySongs.length + ' 首');
+    chk(SL.filterCatalog(cat.songs, '', '__all__', false).length === cat.songs.length, '关闭过滤后恢复全部歌曲');
 
     /* 回归：只有人声版的那条 + 只有完整版的那条，合并后必须两样都有（曾丢掉主音频） */
     const items2 = [
@@ -356,6 +375,20 @@ sec('2. K歌提取与打分');
       }
     } catch (e) { chk(false, '真实目录扫描不应报错', e.message); }
   }
+  /* ============================================================ */
+  /*  5. 统一记录文件夹                                            */
+  /* ============================================================ */
+  sec('5. 统一记录文件夹');
+  {
+    const sb4 = makeSandbox(makeDom());
+    load(sb4, 'js/record-folder.js');
+    const RF = sb4.RecordFolder;
+    chk(!!RF && typeof RF.load === 'function' && typeof RF.pick === 'function' &&
+      typeof RF.writeFiles === 'function' && typeof RF.writeFile === 'function',
+      'record-folder.js 暴露统一记录文件夹接口');
+    chk(RF.supported() === false, '无 File System Access API 时明确标记不支持');
+  }
+
   /* ---------- 结果 ---------- */
   console.log('\n' + '='.repeat(52));
   if (fail) {

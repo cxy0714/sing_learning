@@ -118,10 +118,11 @@
   }
 
   /** 搜索：空格分词，每个词都要命中（歌手或歌名，忽略大小写） */
-  function filterCatalog(songs, query, artist) {
+  function filterCatalog(songs, query, artist, vocalsOnly) {
     var kws = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
     return songs.filter(function (s) {
       if (artist && artist !== '__all__' && s.artist !== artist) return false;
+      if (vocalsOnly && !s.vocals) return false;
       if (!kws.length) return true;
       var hay = (s.artist + ' ' + s.title + ' ' + s.titleRaw + ' ' + s.folder).toLowerCase();
       return kws.every(function (k) { return hay.indexOf(k) >= 0; });
@@ -166,10 +167,10 @@
     return function () { return file ? Promise.resolve(file) : entry.getFile(); };
   }
 
-  var S = { songs: [], all: [], stats: null, dirName: '', mode: '', lastKey: null, restorable: null };
+  var S = { songs: [], all: [], stats: null, dirName: '', mode: '', lastKey: null, restorable: null, vocalsOnly: false };
 
   function wire() {
-    var pick = $('libPickDir'), files = $('libFiles'), rescan = $('libRescan'), search = $('libSearch'), artistSel = $('libArtist'), voc = $('libVocals'), list = $('libList');
+    var pick = $('libPickDir'), files = $('libFiles'), rescan = $('libRescan'), search = $('libSearch'), artistSel = $('libArtist'), voc = $('libVocals'), vocOnly = $('libVocalsOnly'), list = $('libList');
     if (!pick || !list) return;
 
     pick.addEventListener('click', function () { pickDir(); });
@@ -187,6 +188,11 @@
     if (search) search.addEventListener('input', render);
     if (artistSel) artistSel.addEventListener('change', render);
     if (voc) voc.addEventListener('change', render);
+    if (vocOnly) vocOnly.addEventListener('click', function () {
+      S.vocalsOnly = !S.vocalsOnly;
+      updateVocalsOnlyBtn();
+      render();
+    });
     list.addEventListener('click', function (e) {
       var el = e.target.closest ? e.target.closest('.lib-item') : null;
       if (!el) return;
@@ -265,6 +271,7 @@
     S.all = cat.songs;
     S.stats = cat;
     buildArtistSelect();
+    updateVocalsOnlyBtn();
     render();
     var withLrc = S.all.filter(function (s) { return s.lrc; }).length;
     var withVoc = S.all.filter(function (s) { return s.vocals; }).length;
@@ -284,13 +291,22 @@
       artists.map(function (a) { return '<option value="' + a.replace(/"/g, '&quot;') + '">' + a + '（' + counts[a] + '）</option>'; }).join('');
   }
 
+  function updateVocalsOnlyBtn() {
+    var b = $('libVocalsOnly');
+    if (!b) return;
+    var n = S.all.filter(function (s) { return !!s.vocals; }).length;
+    b.classList.toggle('on', S.vocalsOnly);
+    b.textContent = (S.vocalsOnly ? '🎙 只看人声分离版 ✓' : '🎙 只看人声分离版') + '（' + n + '）';
+    b.title = n ? ('曲库里共 ' + n + ' 首有人声分离版') : '曲库里还没有人声分离版；用 tools/separate-vocals.ps1 生成后再扫描';
+  }
+
   function render() {
     var list = $('libList');
     if (!list) return;
     if (!S.all.length) { list.innerHTML = '<p class="muted small">曲库是空的。点上面的「选择音乐文件夹」授权一次，我就能把歌单列出来。</p>'; return; }
     var q = ($('libSearch') && $('libSearch').value) || '';
     var ar = ($('libArtist') && $('libArtist').value) || '__all__';
-    var res = filterCatalog(S.all, q, ar);
+    var res = filterCatalog(S.all, q, ar, S.vocalsOnly);
     S.songs = res;
     var useVoc = $('libVocals') && $('libVocals').checked;
     var MAX = 800;
@@ -306,7 +322,9 @@
         '<span class="lib-tags">' + tags.join('') + '</span>' +
         '<span class="lib-go">▶' + primary + '</span></div>';
     }).join('');
-    list.innerHTML = '<div class="lib-head">找到 <b>' + res.length + '</b> 首</div>' + html +
+    var head = '找到 <b>' + res.length + '</b> 首' + (S.vocalsOnly ? ' <span class="tag tag-v">只看人声分离版</span>' : '');
+    var empty = res.length ? '' : '<p class="muted small">' + (S.vocalsOnly ? '没有匹配的「人声分离版」歌曲；试试把歌手切回「全部歌手」或清空搜索。' : '没有匹配的歌曲，换个关键词或歌手试试。') + '</p>';
+    list.innerHTML = '<div class="lib-head">' + head + '</div>' + empty + html +
       (res.length > MAX ? '<div class="muted small">（只显示前 ' + MAX + ' 首，请用搜索缩小范围）</div>' : '');
   }
 

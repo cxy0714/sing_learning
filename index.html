@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>唱歌音准实时监测 · do re mi 调音器</title>
 <meta name="description" content="网页版实时音高检测：用 do re mi fa sol la xi 显示你唱的音、偏差音分和标准频率，可录音、导出数据用于分析音准练习。" />
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=7" />
 </head>
 <body>
 
@@ -101,13 +101,21 @@
       <h2>🎼 我的音域记录（每天自动记最高/最低音）</h2>
       <div class="row wrap">
         <button id="rangeUseBtn" class="btn btn-sm">用今天的音域更新设置</button>
+        <button id="rangeFolderBtn" class="btn btn-ghost btn-sm">📁 选择记录文件夹</button>
+        <button id="rangeSaveBtn" class="btn btn-ghost btn-sm">💾 保存音域记录</button>
+        <button id="rangeExportBtn" class="btn btn-ghost btn-sm">⬇ 导出 JSON / CSV</button>
         <button id="rangeClearBtn" class="btn btn-ghost btn-sm danger">清空全部记录</button>
       </div>
     </div>
+    <p id="rangeFolderName" class="muted small">记录文件夹：未设置</p>
     <p class="muted small">
-      开着麦克风唱就行：页面会自动记下你**唱到过的最低音和最高音**（只统计稳定唱到 ≥0.2 秒的音，避免偶尔的误判）。
-      记录只存在你浏览器本地，不上传、不进仓库。
+      开着麦克风唱就行：页面会自动记下你**唱到过的最低音和最高音**。
+      <b>只统计稳定唱住的音</b>：同一个音连续 ≥0.4 秒、置信度 ≥80%、音量够、而且期间抖动 &lt;60 音分 ——
+      所以偶尔跳到 800 Hz 那种假音/谐波<b>不会被记进去</b>。被过滤时会明确告诉你（见下面那行灰字）。
+      <br>记录平时存在<b>浏览器本地</b>（按域名隔离），点 <b>📁 选择记录文件夹</b> 授权一次，
+      以后点 <b>💾 保存音域记录</b>，或 K 歌页自动保存时，都会写进同一个记录文件夹；也可以随时 <b>⬇ 导出</b>，不上传、不进仓库。
     </p>
+    <p id="rangeReject" class="muted small" style="display:none;color:var(--warn)"></p>
     <div id="rangeToday" class="status">还没有记录 —— 点「开始收音」唱几个音（往下探探最低、往上够够最高）。</div>
     <div class="table-scroll">
       <table class="stat-table">
@@ -285,7 +293,8 @@
   </div>
 </footer>
 
-<script src="js/pitch.js"></script>
-<script src="js/app.js"></script>
+<script src="js/pitch.js?v=7"></script>
+<script src="js/record-folder.js?v=7"></script>
+<script src="js/app.js?v=7"></script>
 </body>
 </html>

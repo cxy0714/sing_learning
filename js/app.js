@@ -83,6 +83,11 @@
     buildShiftSelects();
     renderRangeInfo();
     renderRangeLog();
+    renderRangeFolder();
+    if (window.RecordFolder) {
+      window.RecordFolder.onChange(renderRangeFolder);
+      window.RecordFolder.load().then(renderRangeFolder).catch(renderRangeFolder);
+    }
     updateShift();
     drawLive(performance.now());
     loadSessions();
@@ -124,6 +129,14 @@
       $('rangeSel').value = 'custom';
       applyRange(d.low, d.high, 'custom');
       setStatus('✅ 已把今天的音域 ' + PT.midiToName(d.low) + ' – ' + PT.midiToName(d.high) + ' 设为「我的音域」，K歌页会跟着用。');
+    });
+    var rangeFolderBtn = $('rangeFolderBtn');
+    if (rangeFolderBtn) rangeFolderBtn.addEventListener('click', chooseRangeFolder);
+    $('rangeSaveBtn').addEventListener('click', saveRangeToFolder);
+    $('rangeExportBtn').addEventListener('click', function () {
+      var log = loadRangeLog();
+      if (!Object.keys(log).length) { setStatus('还没有音域记录可导出。'); return; }
+      downloadRangeFiles(log);
     });
     $('rangeClearBtn').addEventListener('click', function () {
       if (!confirm('清空所有日期的音域记录？（只影响浏览器本地记录）')) return;
@@ -290,7 +303,7 @@
         var sf = 0, sc = 0;
         near.forEach(function (p) { sf += p.f; sc += p.conf; });
         var f = sf / near.length;
-        cur = { freq: f, conf: sc / near.length, rms: rms };
+        cur = { freq: f, midi: PT.freqToMidi(f, S.a4), conf: sc / near.length, rms: rms };
       }
     }
     S.current = cur;
@@ -474,7 +487,7 @@
    * 界面：实时读数
    * ============================================================ */
   function resetReadout() {
-    S.holdMidi = null; S.holdN = 0;
+    S.hold = { midi: null, n: 0, sum: 0, min: 0, max: 0, conf: 0, rms: 0 };
     $('noteSol').textContent = '--';
     $('noteOct').textContent = '';
     $('noteLetter').textContent = '等待开始…';
@@ -520,10 +533,26 @@
 
     var note = PT.describeMidi(PT.freqToMidi(cur.freq, S.a4), S.a4, S.useFlat);
     cur.note = note;
-    /* 每日音域记录：连续 3 帧（约 0.2 秒）都停在同一个音，才算"真的唱到了" */
-    if (S.holdMidi === note.midi) S.holdN = (S.holdN || 0) + 1;
-    else { S.holdMidi = note.midi; S.holdN = 1; }
-    if (S.holdN === 3) recordRangeNote(note.midi);
+    /* 每日音域记录：只在「稳定唱住的音」上记（防抖动/谐波假音）
+       条件：① 同一个音连续 6 帧（约 0.4 秒）② 这 6 帧平均置信度 ≥ 0.8
+             ③ 音量够（RMS ≥ 0.008）④ 期间音高抖动 < 60 音分 */
+    var H = S.hold || (S.hold = { midi: null, n: 0, sum: 0, min: 0, max: 0, conf: 0, rms: 0 });
+    if (H.midi === note.midi && cur.midi !== undefined) {
+      H.n++; H.sum += cur.midi;
+      if (cur.midi < H.min) H.min = cur.midi;
+      if (cur.midi > H.max) H.max = cur.midi;
+      H.conf += cur.conf; H.rms = Math.max(H.rms, cur.rms);
+    } else {
+      H.midi = note.midi; H.n = 1; H.sum = cur.midi; H.min = cur.midi; H.max = cur.midi;
+      H.conf = cur.conf; H.rms = cur.rms;
+    }
+    if (H.n === 6) {
+      var avgConf = H.conf / 6;
+      var spread = (H.max - H.min) * 100;         // 抖动（音分）
+      var okNote = avgConf >= 0.8 && H.rms >= 0.008 && spread <= 60;
+      if (okNote) recordRangeNote(note.midi);
+      else { S.lastReject = { midi: note.midi, conf: avgConf, spread: spread, rms: H.rms }; S.lastRejectAt = Date.now(); }
+    }
 
     $('noteSol').textContent = note.solfege;
     $('noteOct').textContent = note.octave;
@@ -843,6 +872,121 @@
       '<td><button class="btn btn-ghost btn-sm danger" data-del="' + k + '">删</button></td>' +
       '</tr>';
   }
+  /* 导出/保存音域记录 */
+  function rangeCSV(log) {
+    var rows = ['date,low_note,low_hz,high_note,high_hz,semitones,octaves,voice'];
+    Object.keys(log).sort().reverse().forEach(function (k) {
+      var d = log[k];
+      if (d.low === null || d.high === null) return;
+      var lo = PT.describeMidi(d.low, S.a4, false), hi = PT.describeMidi(d.high, S.a4, false);
+      rows.push([k, lo.letterName, num(lo.freq, 2), hi.letterName, num(hi.freq, 2),
+                 d.high - d.low, ((d.high - d.low) / 12).toFixed(2), voiceText(d.low, d.high)].join(','));
+    });
+    return '\ufeff' + rows.join('\n');
+  }
+  function rangeJSON(log) {
+    return JSON.stringify({
+      app: 'vocal-pitch-monitor-range-log', version: 1,
+      exportedAt: new Date().toISOString(), a4: S.a4,
+      note: '每天唱到的最低/最高音（只统计稳定 ≥0.4 秒、置信度 ≥0.8、抖动 <60 音分的音）',
+      days: Object.keys(log).sort().reverse().map(function (k) {
+        var d = log[k];
+        var lo = PT.describeMidi(d.low, S.a4, false), hi = PT.describeMidi(d.high, S.a4, false);
+        return { date: k, low: lo.letterName, lowHz: +num(lo.freq, 2), high: hi.letterName, highHz: +num(hi.freq, 2),
+                 semitones: d.high - d.low, voice: voiceText(d.low, d.high), noteCounts: d.notes };
+      })
+    }, null, 1);
+  }
+  function rangeStamp() {
+    var d = new Date();
+    return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()) + '-' + pad2(d.getHours()) + pad2(d.getMinutes());
+  }
+  function renderRangeFolder() {
+    var el = $('rangeFolderName');
+    if (!el) return;
+    var RF = window.RecordFolder;
+    var b = $('rangeFolderBtn');
+    if (!RF || !RF.supported()) {
+      el.textContent = '记录文件夹：当前浏览器不能直接写文件夹，可用「⬇ 导出 JSON / CSV」下载';
+      if (b) b.disabled = true;
+      return;
+    }
+    if (b) b.disabled = false;
+    var n = RF.name();
+    el.textContent = n
+      ? ('记录文件夹：' + n + '（音域 + K歌记录共用）')
+      : '记录文件夹：未设置（点「📁 选择记录文件夹」授权一次，两个页面共用）';
+    if (b) b.textContent = n ? '📁 更换记录文件夹' : '📁 选择记录文件夹';
+  }
+  function chooseRangeFolder() {
+    var RF = window.RecordFolder;
+    if (!RF || !RF.supported()) {
+      setStatus('这个浏览器不能直接写文件夹，请用 Chrome / Edge；也可以继续用「⬇ 导出 JSON / CSV」。');
+      return;
+    }
+    RF.pick().then(function (h) {
+      renderRangeFolder();
+      setStatus('✅ 记录文件夹已设为 <b>' + h.name + '</b>：音域记录和 K 歌练习记录都会写到这里。');
+    }).catch(function (e) {
+      if (e && e.name !== 'AbortError') setStatus('设置记录文件夹失败：' + (e.message || e));
+    });
+  }
+  function saveRangeToFolder() {
+    var log = loadRangeLog();
+    var RF = window.RecordFolder;
+    if (!RF || !RF.supported()) {
+      if (!Object.keys(log).length) { setStatus('还没有音域记录可保存，当前浏览器也不能直接写文件夹。'); return; }
+      downloadRangeFiles(log);
+      return;
+    }
+    var doWrite = function () {
+      if (!Object.keys(log).length) {
+        renderRangeFolder();
+        setStatus('✅ 记录文件夹已设为 <b>' + RF.name() + '</b>；等有音域记录后再点「💾 保存音域记录」即可。');
+        return Promise.resolve();
+      }
+      return writeRangeFiles(log);
+    };
+    if (!RF.get()) {
+      RF.pick().then(doWrite).catch(function (e) {
+        if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
+      });
+      return;
+    }
+    doWrite().catch(function (e) {
+      if (e && (e.code === 'NO_PERM' || e.code === 'NO_FOLDER')) {
+        return RF.pick().then(doWrite).catch(function (e2) {
+          if (e2 && e2.name !== 'AbortError') setStatus('保存失败：' + (e2.message || e2));
+        });
+      }
+      if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
+    });
+  }
+  function writeRangeFiles(log) {
+    var RF = window.RecordFolder;
+    var base = 'range-log-' + rangeStamp();
+    return RF.writeFiles([
+      { name: base + '.json', data: rangeJSON(log) },
+      { name: base + '.csv', data: rangeCSV(log) }
+    ]).then(function () {
+      renderRangeFolder();
+      setStatus('✅ 已存到记录文件夹：' + base + '.json / ' + base + '.csv');
+    });
+  }
+  function downloadRangeFiles(log) {
+    var base = 'range-log-' + rangeStamp();
+    var files = [[base + '.json', rangeJSON(log), 'application/json'], [base + '.csv', rangeCSV(log), 'text/csv']];
+    files.forEach(function (f) {
+      var blob = new Blob([f[1]], { type: f[2] + ';charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = f[0];
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    });
+    setStatus('已下载：' + base + '.json / .csv');
+  }
+
   function renderRangeLog() {
     var body = $('rangeBody'), today = $('rangeToday');
     if (!body) return;
@@ -859,7 +1003,17 @@
       var b2 = $('rangeUseBtn2');
       if (b2) b2.addEventListener('click', function () { $('rangeUseBtn').click(); });
     } else {
-      today.textContent = '今天还没有记录 —— 点「开始收音」，从最低能唱的音一路往上唱到最高，每个音停 0.3 秒左右。';
+      today.textContent = '今天还没有记录 —— 点「开始收音」，从最低能唱的音一路往上唱到最高，每个音停 0.4 秒左右（稳定唱住才会被记下）。';
+    }
+    var rj = $('rangeReject');
+    if (rj) {
+      if (S.lastReject && Date.now() - (S.lastRejectAt || 0) < 30000) {
+        var rn = PT.describeMidi(S.lastReject.midi, S.a4, false);
+        rj.innerHTML = '🧹 刚过滤掉一个不靠谱的音：<b>' + rn.letterName + '</b>（' + num(rn.freq, 0) + ' Hz）—— ' +
+          '置信度 ' + Math.round(S.lastReject.conf * 100) + '% · 抖动 ' + Math.round(S.lastReject.spread) + ' 音分 · 音量 ' +
+          S.lastReject.rms.toFixed(3) + '（未记入音域）';
+        rj.style.display = '';
+      } else rj.style.display = 'none';
     }
     body.innerHTML = keys.length
       ? keys.map(function (k) { return rangeRow(k, log[k]); }).join('')

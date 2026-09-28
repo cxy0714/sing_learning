@@ -100,11 +100,14 @@
   点一下**直接载入播放器开唱**。会自动配对歌词 `.lrc`、**跨目录认领**人声分离版 `xxx.vocals.mp3`、
   同名副本自动合并成一条，并统计还有多少 `.ncm` 没转换。
   浏览器不给网页自己扫硬盘的权限，所以必须由你授权一次；文件只在本机被读取。
+- **只看有人声分离版**：曲库里点「🎙 只看人声分离版」，列表只显示所有带 `xxx.vocals.mp3` 的歌曲；
+  按钮上会显示当前曲库共有多少首有人声分离版，不用在几百首里往上翻。
 - **歌词（.lrc）**：选音频时把同名的 `.lrc` 一起选上就会自动配对（按文件名匹配），
   播放/跟唱时同步高亮当前行。做了 UTF-8 / GBK 自动识别。已用真实曲库 200 个 `.lrc`（2282 行）验证解析。
 - **实时提示**：现在该唱哪个音、你唱的是哪个音、偏差多少音分、**这个音的实时得分**
 - **成绩单**：总分、平均偏差、命中率、整体偏高/偏低倾向、**最该练的那个音**，逐音表格带进度条
 - **导出 JSON / CSV**：同时包含「歌的目标音高线」和「你的原始音高轨迹」
+- **统一记录文件夹**：点一次「📁 选择记录文件夹」授权，音域记录点保存、K 歌记录自动保存时都会写进同一个文件夹；文件夹句柄会被浏览器记住，下次不用重选
 - **播放器（④）· 直接用你自己的本地音乐**（网易云/QQ音乐下载的文件也行，只要是 mp3/m4a/wav/flac）：
   1. **从音频里估主旋律音高线**：解码 → **带通滤波（高通 120Hz 去贝斯/底鼓 + 低通 1200Hz 去镲片，
      同时当降采样抗混叠）** → 降采样到 ~11kHz → 每 46ms 一帧跑 YIN（**音高搜索范围限定在人声区**）
@@ -166,6 +169,8 @@
 powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\CloudMusic\周华健 - 难念的经.mp3"
 # 整个目录
 powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\Music" -Out "C:\Music\vocals"
+# 断点续跑：已有 .vocals.mp3 的会跳过
+powershell -ExecutionPolicy Bypass -File tools\separate-vocals.ps1 -Path "C:\Music" -Out "C:\Music\vocals" -SkipExisting
 ```
 
 然后在③的曲库里点这首歌（勾上「优先用人声分离版」） —— 音高线就会干净非常多
@@ -197,7 +202,7 @@ CPU 上大约 1~3 分钟/首（实测 4 分 48 秒的歌用了 226 秒）；有 
 ### 方法 A：网页操作（不用命令行）
 
 1. 打开 <https://github.com/new>，新建一个仓库，例如 `vocal-pitch-monitor`，选 **Public**，点 Create。
-2. 进入仓库 → **Add file → Upload files**，把本文件夹里的 **`index.html`、`style.css`、`js/` 文件夹**（`js/pitch.js`、`js/app.js`）拖进去，点 **Commit changes**。
+2. 进入仓库 → **Add file → Upload files**，把本文件夹里的 **`index.html`、`karaoke.html`、`style.css`、`karaoke.css`、`js/` 文件夹**（至少包含 `js/pitch.js`、`js/app.js`、`js/karaoke.js`、`js/library.js`、`js/record-folder.js`、`js/record.js`）拖进去，点 **Commit changes**。
 3. 仓库 → **Settings → Pages**，`Source` 选 **Deploy from a branch**，`Branch` 选 **main** 和 **/ (root)**，点 Save。
 4. 等 1 分钟左右，刷新页面，会看到网址：`https://你的用户名.github.io/vocal-pitch-monitor/`。
 5. 用手机或电脑打开这个网址（**https**，可以用麦克风），加到主屏幕/书签即可。
@@ -284,11 +289,12 @@ js/app.js        音准检测页逻辑
 
 js/karaoke.js    K歌页逻辑：音频提取、同步跟唱、打分、导出
 js/library.js    本地曲库：文件夹授权、扫描整理、按歌手/歌名搜索、点歌即唱
+js/record-folder.js 统一记录文件夹：音域记录 + K歌练习记录共用一个授权文件夹
 serve.js         本地预览服务器（node serve.js → http://localhost:8000）
 tools/ncmdump.js          .ncm → mp3/flac 转换工具（JavaScript 重写自 MIT 项目 taurusxin/ncmdump）
 tools/separate-vocals.ps1 Demucs 人声分离（去掉伴奏再提音高，解决"跟着贝斯跑"）
 tools/LICENSE-upstream-ncmdump.txt  上游项目许可证
-test/selftest.js          离线回归测试（node test/selftest.js，58 项）
+test/selftest.js          离线回归测试（node test/selftest.js，71 项）
 test/analyze-audio.js     评估「音高线提取」质量（判断跟人声还是跟贝斯）
 .github/workflows/pages.yml   GitHub Pages 自动部署
 README.md        本文件

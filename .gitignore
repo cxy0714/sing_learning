@@ -14,10 +14,13 @@
 karaoke-*.json
 pitch-*.json
 pitch-*.csv
+range-log-*.json
+range-log-*.csv
 *-manifest.json
 tools/vocals/
 # 本地环境（体积巨大，且与本网站无关）
 .demucs-env/
+.music-staging/
 node_modules/
 __pycache__/
 *.pyc
