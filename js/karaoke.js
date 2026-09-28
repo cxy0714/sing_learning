@@ -63,7 +63,9 @@
     refTrack: null, refSegs: null, refShiftOct: 0,
     lrc: null, _lyIdx: -1,
     vocalBand: true,         // 人声带通滤波（去贝斯/镲片），默认开
-    vocalPreset: 'male'      // 音高搜索范围（排除贝斯/低音提琴等伴奏声部）
+    vocalPreset: 'male',     // 音高搜索范围（排除贝斯/低音提琴等伴奏声部）
+    viewWin: 8,              // 音高线显示窗口（秒）；0 = 全曲总览
+    karaAxis: null           // 纵轴平滑值
   };
 
   /* ============================================================
@@ -99,6 +101,7 @@
       if (typeof k.transpose === 'number') S.transpose = k.transpose;
       if (typeof k.vocalBand === 'boolean') S.vocalBand = k.vocalBand;
       if (k.vocalPreset) S.vocalPreset = k.vocalPreset;
+      if (typeof k.viewWin === 'number') S.viewWin = k.viewWin;
     } catch (e) {}
     $('speedSel').value = String(S.speed);
     $('guideChk').checked = S.guide;
@@ -109,7 +112,7 @@
     try {
       localStorage.setItem(LS_KARA, JSON.stringify({
         speed: S.speed, guide: S.guide, metro: S.metro, transpose: S.transpose,
-        vocalBand: S.vocalBand, vocalPreset: S.vocalPreset
+        vocalBand: S.vocalBand, vocalPreset: S.vocalPreset, viewWin: S.viewWin
       }));
     } catch (e) {}
   }
@@ -132,6 +135,8 @@
     });
     sel.value = S.vocalPreset;
     $('vocalBandChk').checked = S.vocalBand;
+    var vs = $('viewSel');
+    if (vs) vs.value = String(S.viewWin);
   }
 
   function buildSongList() {
@@ -156,6 +161,7 @@
     $('songSel').value = song.id;
     S.notes = parseMelody(song.melody);
     S.totalMs = S.notes.length ? S.notes[S.notes.length - 1].endMs : 0;
+    S.karaAxis = null;
     if (!keepTranspose) {
       autoFit();
     } else {
@@ -193,6 +199,7 @@
     var song = S.song;
     S.notes = parseMelody(song.melody);
     S.totalMs = S.notes.length ? S.notes[S.notes.length - 1].endMs : 0;
+    S.karaAxis = null;
     applyTranspose();
     updateSongInfo();
     drawKara();
@@ -465,6 +472,22 @@
     return null;
   }
 
+  /** 计算「跟随滚动」要显示的时间窗：播放头固定在窗口约 1/3 处，且窗口不越界。
+   *  viewWin <= 0 → 全曲总览；歌曲比窗口短 → 显示全长。 */
+  function karaWindow(totalMs, viewWin, pos) {
+    totalMs = Math.max(1000, totalMs || 0);
+    if (!(viewWin > 0) || viewWin * 1000 >= totalMs) return { t0: 0, t1: totalMs };
+    var viewMs = viewWin * 1000;
+    var p = isFinite(pos) ? pos : 0;
+    var t0 = 0;
+    if (p > 0) {
+      t0 = p - viewMs * 0.32;
+      if (t0 + viewMs > totalMs) t0 = totalMs - viewMs;
+      if (t0 < 0) t0 = 0;
+    }
+    return { t0: t0, t1: t0 + viewMs };
+  }
+
   function drawKara() {
     var cv = $('karaChart');
     if (!cv) return;
@@ -478,11 +501,11 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    var padL = 56, padR = 14, padT = 18, padB = 24;
+    var padL = 56, padR = 14, padT = 18, padB = 26;
     var plotW = Math.max(50, w - padL - padR), plotH = Math.max(50, h - padT - padB);
     var hasSamples = S.samples.length > 0;
 
-    if (!S.notes.length && !hasSamples) {
+    if (!S.notes.length && !hasSamples && !(S.refTrack && S.refTrack.length)) {
       ctx.fillStyle = '#4b5b7d';
       ctx.font = '14px sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -490,40 +513,54 @@
       return;
     }
 
-    /* 纵轴范围：目标音 + 你唱的音 + 音域 */
+    /* ---------- 1) 时间窗：默认只显示"当前附近"的一小段，跟着播放滚动 ---------- */
+    var refLast = (S.refTrack && S.refTrack.length) ? S.refTrack[S.refTrack.length - 1].t : 0;
+    var smpLast = hasSamples ? S.samples[S.samples.length - 1].t : 0;
+    var totalMs = Math.max(1000, S.totalMs, refLast, smpLast);
+    var win = karaWindow(totalMs, S.viewWin, S.songPos);
+    var t0 = win.t0, t1 = win.t1;
+    var span = Math.max(1, t1 - t0);
+
+    /* ---------- 2) 纵轴：只按"窗口内"的内容取范围（这样局部细节才拉得开） ---------- */
     var lo = Infinity, hi = -Infinity;
+    function consider(m) { if (m < lo) lo = m; if (m > hi) hi = m; }
+    var m0 = t0 - 200, m1 = t1 + 200;
     S.notes.forEach(function (n) {
       if (n.midi === null) return;
-      if (n.midi < lo) lo = n.midi;
-      if (n.midi > hi) hi = n.midi;
+      if (n.endMs < m0 || n.startMs > m1) return;
+      consider(n.midi);
     });
-    S.samples.forEach(function (s) {
-      var m = PT.freqToMidi(s.f, S.a4);
-      if (m < lo) lo = m;
-      if (m > hi) hi = m;
-    });
-    if (S.refTrack && S.refTrack.length) {
-      S.refTrack.forEach(function (p) {
-        var m = PT.freqToMidi(p.f, S.a4) + (S.refShiftOct || 0);
-        if (m < lo) lo = m;
-        if (m > hi) hi = m;
-      });
+    for (var si = 0; si < S.samples.length; si++) {
+      var sp = S.samples[si];
+      if (sp.t < m0 || sp.t > m1) continue;
+      consider(PT.freqToMidi(sp.f, S.a4));
+    }
+    if (S.refTrack) {
+      for (var ri = 0; ri < S.refTrack.length; ri++) {
+        var rp0 = S.refTrack[ri];
+        if (rp0.t < m0 || rp0.t > m1 || rp0.gap) continue;
+        consider(rp0.q + (S.refShiftOct || 0));
+      }
     }
     if (!isFinite(lo)) { lo = 60; hi = 72; }
     lo = Math.floor(lo) - 1; hi = Math.ceil(hi) + 1;
-    if (isFinite(S.rangeLow) && S.rangeLow - 1 < lo) lo = S.rangeLow - 1;
-    if (isFinite(S.rangeHigh) && S.rangeHigh + 1 > hi) hi = S.rangeHigh + 1;
-    if (hi - lo < 8) { var c = (lo + hi) / 2; lo = c - 4; hi = c + 4; }
+    if (S.viewWin > 0 && hi - lo < 7) { var c0 = (lo + hi) / 2; lo = c0 - 3.5; hi = c0 + 3.5; }
+    if (isFinite(S.rangeLow) && isFinite(S.rangeHigh) && S.viewWin <= 0) {
+      if (S.rangeLow - 1 < lo) lo = S.rangeLow - 1;
+      if (S.rangeHigh + 1 > hi) hi = S.rangeHigh + 1;
+    }
+    /* 平滑跟随，避免纵轴抖 */
+    if (!S.karaAxis || lo > S.karaAxis.hi || hi < S.karaAxis.lo) S.karaAxis = { lo: lo, hi: hi };
+    S.karaAxis.lo += (lo - S.karaAxis.lo) * 0.20;
+    S.karaAxis.hi += (hi - S.karaAxis.hi) * 0.20;
+    lo = S.karaAxis.lo; hi = S.karaAxis.hi;
 
-    var lastT = hasSamples ? S.samples[S.samples.length - 1].t : 0;
-    if (S.refTrack && S.refTrack.length) lastT = Math.max(lastT, S.refTrack[S.refTrack.length - 1].t);
-    var dur = Math.max(800, S.totalMs, lastT);
-    function X(t) { return padL + clamp(t / dur, 0, 1) * plotW; }
+    function X(t) { return padL + ((t - t0) / span) * plotW; }
     function Y(m) { return padT + (hi - m) / (hi - lo) * plotH; }
 
-    /* 半音横线 + 唱名 */
+    /* ---------- 3) 半音横线 + 唱名（只画窗口内的音，标签更清楚） ---------- */
     var MAJ = [0, 2, 4, 5, 7, 9, 11];
-    ctx.font = '10px sans-serif';
+    ctx.font = '11px sans-serif';
     ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
     for (var m = Math.ceil(lo); m <= Math.floor(hi); m++) {
       var info = PT.describeMidi(m, S.a4, false);
@@ -535,44 +572,73 @@
       ctx.fillText(info.solfege + info.octave, padL - 5, Y(m));
     }
 
-    /* 音域带 */
-    if (isFinite(S.rangeLow) && isFinite(S.rangeHigh)) {
+    /* ---------- 4) 音域带（仅在总览模式下画，局部模式会挤） ---------- */
+    if (S.viewWin <= 0 && isFinite(S.rangeLow) && isFinite(S.rangeHigh)) {
       var bHi = Y(Math.min(hi, S.rangeHigh + 0.5)), bLo = Y(Math.max(lo, S.rangeLow - 0.5));
-      if (bLo > bHi) {
-        ctx.fillStyle = 'rgba(96,165,250,.07)';
-        ctx.fillRect(padL, bHi, plotW, bLo - bHi);
-      }
-      ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = 'rgba(96,165,250,.45)';
-      ctx.beginPath(); ctx.moveTo(padL, Y(S.rangeHigh)); ctx.lineTo(padL + plotW, Y(S.rangeHigh)); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(padL, Y(S.rangeLow)); ctx.lineTo(padL + plotW, Y(S.rangeLow)); ctx.stroke();
-      ctx.setLineDash([]);
+      if (bLo > bHi) { ctx.fillStyle = 'rgba(96,165,250,.07)'; ctx.fillRect(padL, bHi, plotW, bLo - bHi); }
     }
 
-    /* 目标阶梯线（灰蓝） */
+    /* ---------- 5) 目标阶梯线（窗口内的） ---------- */
     ctx.lineCap = 'round';
     S.notes.forEach(function (n) {
       if (n.midi === null) return;
+      if (n.endMs < m0 || n.startMs > m1) return;
       var x0 = X(n.startMs), x1 = X(n.endMs);
-      if (x1 - x0 < 0.6) return;
       var y = Y(n.midi);
       var active = S.songPos >= n.startMs && S.songPos < n.endMs;
-      ctx.strokeStyle = active ? 'rgba(147,197,253,.95)' : 'rgba(130,150,190,.55)';
-      ctx.lineWidth = active ? 9 : 6;
+      ctx.strokeStyle = active ? 'rgba(147,197,253,.98)' : 'rgba(130,150,190,.55)';
+      ctx.lineWidth = active ? 10 : 7;
       ctx.beginPath(); ctx.moveTo(x0 + 1, y); ctx.lineTo(Math.max(x0 + 2, x1 - 1), y); ctx.stroke();
-      if (x1 - x0 > 26) {
+      if (x1 - x0 > 20) {
         var ni = PT.describeMidi(n.midi, S.a4, false);
-        ctx.fillStyle = active ? '#dbeafe' : '#7b8aad';
+        ctx.fillStyle = active ? '#dbeafe' : '#8b9bbb';
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-        ctx.fillText(ni.solfege + ni.octave, (x0 + x1) / 2, y - 6);
+        ctx.fillText(ni.solfege + ni.octave, (x0 + x1) / 2, y - 7);
       }
     });
 
-    /* 你唱的线（彩色，颜色 = 相对当时目标音的偏差） */
+    /* ---------- 6) 从音频估出来的旋律（窗口内的）：实线=真检测，虚线=推测 ---------- */
+    if (S.refTrack && S.refTrack.length) {
+      var rShift = S.refShiftOct || 0;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'butt';
+      var started2 = false, prevQ = null, prevY = 0;
+      function drawRef(onlyDetected) {
+        ctx.beginPath();
+        started2 = false; prevQ = null; prevY = 0;
+        for (var k = 0; k < S.refTrack.length; k++) {
+          var rr = S.refTrack[k];
+          if (rr.t < m0) continue;
+          if (rr.t > m1) break;
+          if (rr.q === undefined || rr.gap || (onlyDetected ? !rr.detected : rr.detected)) {
+            if (started2) { ctx.stroke(); started2 = false; prevQ = null; }
+            continue;
+          }
+          var ry2 = Y(rr.q + rShift);
+          if (!started2) { ctx.beginPath(); ctx.moveTo(X(rr.t), ry2); started2 = true; }
+          else if (rr.q !== prevQ) { ctx.lineTo(X(rr.t), prevY); ctx.lineTo(X(rr.t), ry2); }
+          else { ctx.lineTo(X(rr.t), ry2); }
+          prevQ = rr.q; prevY = ry2;
+        }
+        if (started2) ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(134,239,172,.9)';
+      ctx.lineWidth = 2.4;
+      drawRef(true);
+      ctx.save();
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = 'rgba(134,239,172,.40)';
+      ctx.lineWidth = 1.5;
+      drawRef(false);
+      ctx.restore();
+    }
+
+    /* ---------- 7) 你唱的线（窗口内的） ---------- */
     var prev = null;
-    for (var i = 0; i < S.samples.length; i++) {
-      var s = S.samples[i];
+    for (var i2 = 0; i2 < S.samples.length; i2++) {
+      var s = S.samples[i2];
+      if (s.t < m0) continue;
+      if (s.t > m1) { prev = null; continue; }
       var x = X(s.t), y = Y(PT.freqToMidi(s.f, S.a4));
       var color = '#60a5fa';
       var tg = targetAt(s.t);
@@ -583,78 +649,44 @@
       var broken = !prev || (s.t - prev.t) > 700;
       if (!broken) {
         ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 3.5;
         ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(x, y); ctx.stroke();
       } else {
-        /* 断点/起笔：画个小圆点，让独点也看得见 */
         ctx.fillStyle = color;
-        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
       }
       prev = { x: x, y: y, t: s.t };
     }
     if (prev) {
       ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(prev.x, prev.y, 2.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(prev.x, prev.y, 3, 0, Math.PI * 2); ctx.fill();
     }
 
-    /* 从本地音频里估出来的主旋律线：连续阶梯线（同一音横向、换音竖线），静音处断开 */
-    if (S.refTrack && S.refTrack.length) {
-      var rShift = S.refShiftOct || 0;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'butt';
-      /* (a) 真有检测到人声的段落：实线 */
-      ctx.strokeStyle = 'rgba(134,239,172,.9)';
-      ctx.lineWidth = 2.4;
-      var started2 = false, prevQ = null, prevY = 0;
-      function drawSeg(detectedOnly) {
-        ctx.beginPath();
-        started2 = false; prevQ = null; prevY = 0;
-        for (var r2 = 0; r2 < S.refTrack.length; r2++) {
-          var rp = S.refTrack[r2];
-          if (rp.t > dur + 200) break;
-          if (rp.q === undefined || rp.gap || (detectedOnly ? !rp.detected : rp.detected)) {
-            if (started2) { ctx.stroke(); started2 = false; prevQ = null; }
-            continue;
-          }
-          var ry = Y(rp.q + rShift);
-          if (!started2) { ctx.beginPath(); ctx.moveTo(X(rp.t), ry); started2 = true; }
-          else if (rp.q !== prevQ) { ctx.lineTo(X(rp.t), prevY); ctx.lineTo(X(rp.t), ry); }
-          else { ctx.lineTo(X(rp.t), ry); }
-          prevQ = rp.q; prevY = ry;
-        }
-        if (started2) ctx.stroke();
-      }
-      drawSeg(true);
-      /* (b) 没有真检测、由 Viterbi 推出来的段落：细虚线（提示"这段是估的"） */
-      ctx.save();
-      ctx.setLineDash([4, 5]);
-      ctx.strokeStyle = 'rgba(134,239,172,.40)';
-      ctx.lineWidth = 1.5;
-      drawSeg(false);
-      ctx.restore();
-      ctx.fillStyle = 'rgba(134,239,172,.9)';
-      ctx.font = '10px sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText('灰绿阶梯线 = 从音频估的旋律（参考）', padL + 6, padT + plotH - 12);
+    /* ---------- 8) 时间网格 + 播放头 ---------- */
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    var stepS = span > 20000 ? 5 : (span > 10000 ? 2 : 1);
+    var tick = Math.ceil(t0 / 1000 / stepS) * stepS;
+    for (var ts = tick * 1000; ts <= t1; ts += stepS * 1000) {
+      var tx = X(ts);
+      ctx.strokeStyle = 'rgba(148,163,184,.13)';
+      ctx.beginPath(); ctx.moveTo(tx, padT); ctx.lineTo(tx, padT + plotH); ctx.stroke();
+      ctx.fillStyle = '#5f6f92';
+      ctx.fillText((ts / 1000).toFixed(0) + 's', tx, padT + plotH + 4);
     }
-
-    /* 播放头 */
     if (S.mode) {
-      var px = X(clamp(S.songPos, 0, dur));
-      ctx.strokeStyle = 'rgba(255,255,255,.85)';
-      ctx.lineWidth = 1.5;
+      var px = X(Math.max(t0, Math.min(t1, S.songPos)));
+      ctx.strokeStyle = 'rgba(255,255,255,.9)';
+      ctx.lineWidth = 1.6;
       ctx.beginPath(); ctx.moveTo(px, padT); ctx.lineTo(px, padT + plotH); ctx.stroke();
       ctx.fillStyle = '#94a3b8';
-      ctx.font = '10px sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.textAlign = 'left';
       ctx.fillText('▶ ' + Math.max(0, S.songPos / 1000).toFixed(1) + 's', px + 4, padT + 1);
     }
     ctx.fillStyle = '#64748b';
-    ctx.font = '10px sans-serif';
-    ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-    ctx.fillText('共 ' + (dur / 1000).toFixed(1) + ' 秒', padL + plotW, padT + 1);
+    ctx.textAlign = 'right';
+    ctx.fillText(S.viewWin > 0 ? ('窗口 ' + (span / 1000).toFixed(0) + 's / 全曲 ' + (totalMs / 1000).toFixed(0) + 's') : ('全曲 ' + (totalMs / 1000).toFixed(0) + 's'), padL + plotW, padT + 1);
   }
-
   /* ---------- 实时提示 ---------- */
   function updateHUD() {
     var tg = S.playing ? targetAt(S.songPos) : null;
@@ -968,6 +1000,7 @@
 
   /** 通用入口：载入一个音频 File（+ 可选同名 .lrc）。曲库、文件选择都走这里 */
   function loadAudioFile(f, lrcFile) {
+    S.karaAxis = null;
     if (lrcFile) {
       readTextSmart(lrcFile).then(function (txt) {
         S.lrc = parseLRC(txt);
@@ -1075,6 +1108,13 @@
       }
     });
     $('vocalBandChk').addEventListener('change', function () { S.vocalBand = this.checked; saveSettings(); });
+    $('viewSel').addEventListener('change', function () {
+      S.viewWin = parseFloat(this.value);
+      if (!isFinite(S.viewWin)) S.viewWin = 8;
+      S.karaAxis = null;
+      saveSettings();
+      drawKara();
+    });
   }
 
   function changeTranspose(d) {

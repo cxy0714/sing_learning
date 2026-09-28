@@ -65,7 +65,17 @@
   <section class="card card--wide">
     <div class="card-head">
       <h2>② 歌的标准音高线 vs 你唱的线</h2>
-      <span id="playInfo" class="muted small"></span>
+      <div class="row wrap">
+        <label class="field">显示范围
+          <select id="viewSel" class="mini-select">
+            <option value="4">跟随 · 4 秒（看得最细）</option>
+            <option value="8" selected>跟随 · 8 秒</option>
+            <option value="15">跟随 · 15 秒</option>
+            <option value="0">全曲总览</option>
+          </select>
+        </label>
+        <span id="playInfo" class="muted small"></span>
+      </div>
     </div>
 
     <div class="kara-hud">
@@ -81,7 +91,7 @@
     <p class="muted small">
       <b>灰蓝色阶梯线</b> = 这首歌的标准音高（虚线是休止/换气）；
       <b>彩色线</b> = 你唱的（绿 = 偏差 25 音分内，黄 = 50 内，红 = 跑调）；
-      <b>竖线</b> = 当前播放位置。浅蓝底色是你设定的音域范围。
+      <b>竖线</b> = 当前播放位置（固定在窗口 1/3 处，画面跟着它滚动）。默认<b>只显示当前附近的 8 秒</b>，音高细节才看得清；想纵览全曲就把「显示范围」切到「全曲总览」。
       在「自由练习」里，还多一条<b>灰绿色阶梯线</b> = 从你上传的音频里估出来的主旋律（会按你的八度自动对齐）：
       <b>实线</b> = 这一段真的检测到人声；<b>细虚线</b> = 没测到、由算法推出来的估计值。
     </p>

@@ -128,7 +128,7 @@ sec('2. K歌提取与打分');
   const dom = makeDom();
   const sb = makeSandbox(dom);
   load(sb, 'js/pitch.js'); load(sb, 'js/songs.js');
-  loadWithHook(sb, 'js/karaoke.js', 'window.__K={S,extractReference,buildRefSegs,scoreVsRef,foldCents,viterbiPath,selectSong,scoreAll,renderResult,buildExport,drawKara,updateHUD,parseLRC,updateLyrics,applyTranspose,autoFit};');
+  loadWithHook(sb, 'js/karaoke.js', 'window.__K={S,extractReference,buildRefSegs,scoreVsRef,foldCents,viterbiPath,selectSong,scoreAll,renderResult,buildExport,drawKara,updateHUD,parseLRC,updateLyrics,applyTranspose,autoFit,karaWindow};');
   const K = sb.__K, S = K.S, PT = sb.PitchTool;
 
   chk(dom.els['songSel'].children.length >= 7, 'K歌页曲库下拉已填充', dom.els['songSel'].children.length);
@@ -176,6 +176,34 @@ sec('2. K歌提取与打分');
   chk(dom.calls.stroke > 0 && String(dom.els['resultBody']._html).indexOf('note-pill') >= 0, '成绩单与图形渲染正常');
   chk(K.foldCents(1200) === 0 && Math.abs(K.foldCents(1250) - 50) < 0.01, '音分八度折叠正确');
 
+  sec('2e. 音高线只显示局部窗口（跟随滚动）');
+  {
+    const W = K.karaWindow;
+    const k1 = W(28800, 4, 14000);
+    chk(Math.round(k1.t1 - k1.t0) === 4000 && k1.t0 < 14000 && k1.t1 > 14000,
+      '4 秒窗口且包含当前播放位置', Math.round(k1.t0) + 'ms ~ ' + Math.round(k1.t1) + 'ms');
+    const k2 = W(28800, 8, 1000);
+    chk(Math.round(k2.t0) === 0 && Math.round(k2.t1) === 8000, '开头不越界', JSON.stringify(k2));
+    const k3 = W(28800, 8, 28500);
+    chk(Math.round(k3.t1) === 28800 && Math.round(k3.t1 - k3.t0) === 8000, '结尾不越界', JSON.stringify(k3));
+    const k4 = W(28800, 0, 14000);
+    chk(k4.t0 === 0 && k4.t1 === 28800, 'viewWin=0 → 全曲总览');
+    const k5 = W(3000, 8, 1000);
+    chk(k5.t0 === 0 && k5.t1 === 3000, '歌比窗口短 → 显示全长');
+    const k6 = W(28800, 4, -500);
+    chk(Math.round(k6.t0) === 0, '起拍阶段（位置为负）显示开头', JSON.stringify(k6));
+
+    /* 缩放效果：局部模式的纵轴跨度应该明显更小（音高细节被放大） */
+    K.selectSong('twinkle', false);
+    S.playing = true; S.mode = 'sing'; S.samples = []; S.songPos = 14000;
+    S.viewWin = 0; S.karaAxis = null; K.drawKara();
+    const spanFull = S.karaAxis.hi - S.karaAxis.lo;
+    S.viewWin = 4; S.karaAxis = null; K.drawKara();
+    const spanLoc = S.karaAxis.hi - S.karaAxis.lo;
+    chk(spanLoc > 0 && spanLoc < spanFull, '局部模式的纵轴跨度更小（细节被放大）',
+      '全曲 ' + spanFull.toFixed(1) + ' 个半音 → 局部 ' + spanLoc.toFixed(1) + ' 个半音');
+    S.playing = false;
+  }
   sec('2d. 歌词解析');
   const lrc = K.parseLRC('[00:01.50]第一行\n[00:03.00]第二行\n[00:05.25]第三行');
   chk(lrc.length === 3 && lrc[0].t === 1500 && lrc[2].t === 5250, 'LRC 时间标签解析正确', JSON.stringify(lrc.map(l => l.t)));

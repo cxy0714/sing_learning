@@ -105,6 +105,9 @@
   让整首歌落进你的音域；也可以手动 ±半音
 - **速度**：0.6x / 0.8x / 1.0x / 1.15x，慢练不丢人
 - **本地音乐**：任意 mp3/flac 都能进来练，并自动估出旋律线当评分基准
+- **音高线只显示局部（跟随滚动）**：默认只画**当前附近的 8 秒**（可切 4 秒 / 15 秒 / 全曲总览），
+  播放头固定在窗口 1/3 处、画面跟着滚动；**纵轴也跟着窗口自动缩放**（平滑跟随，不跳）。
+  整曲压在一屏时音符只有几像素宽、根本看不清细节，所以默认用局部窗口。
 - **本地曲库（④）**：**授权一次音乐文件夹**（Chrome/Edge 会记住授权，下次点一下恢复），
   自动把整个目录（含子目录）整理成歌单：**按歌手 / 歌名搜索**（支持多个关键词、中文）、
   点一下**直接载入播放器开唱**。会自动配对歌词 `.lrc`、**跨目录认领**人声分离版 `xxx.vocals.mp3`、
@@ -297,7 +300,7 @@ serve.js         本地预览服务器（node serve.js → http://localhost:8000
 tools/ncmdump.js          .ncm → mp3/flac 转换工具（JavaScript 重写自 MIT 项目 taurusxin/ncmdump）
 tools/separate-vocals.ps1 Demucs 人声分离（去掉伴奏再提音高，解决"跟着贝斯跑"）
 tools/LICENSE-upstream-ncmdump.txt  上游项目许可证
-test/selftest.js          离线回归测试（node test/selftest.js，51 项）
+test/selftest.js          离线回归测试（node test/selftest.js，58 项）
 test/analyze-audio.js     评估「音高线提取」质量（判断跟人声还是跟贝斯）
 .github/workflows/pages.yml   GitHub Pages 自动部署
 README.md        本文件
