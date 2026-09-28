@@ -129,3 +129,10 @@
 .rec-actions { justify-content: flex-end; }
 @media (max-width: 700px) { .rec-actions { grid-column: 1 / -1; justify-content: flex-start; } }
 #recPlayInfo:empty { display: none; }
+
+/* 练习记录回放进度条 */
+.rec-playbar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.rec-playbar[hidden] { display: none; }
+.rec-seek { flex: 1; height: 22px; cursor: pointer; accent-color: var(--accent); }
+#recTime { min-width: 88px; text-align: right; }
+@media (max-width: 700px) { .rec-playbar { flex-wrap: wrap; } #recTime { margin-left: auto; } }

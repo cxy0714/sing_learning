@@ -60,6 +60,7 @@
   var stream = null, mr = null, chunks = [], lastBlob = null;
   var onStatus = function () {};
   var prefsReady = null;
+  var playBarEl = null, recSeekEl = null, recTimeEl = null, playDurMs = 0, seeking = false;
   var S = { dir: null, auto: true };        // 保存文件夹 + 是否自动保存
 
   function loadPrefs() {
@@ -378,6 +379,48 @@
     if (el) el.innerHTML = msg || '';
     onStatus(msg || '');
   }
+  function fmtClock(ms) {
+    if (!isFinite(ms) || ms < 0) ms = 0;
+    var s = Math.floor(ms / 1000), m = Math.floor(s / 60);
+    s = s % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function showPlayBar(durMs) {
+    if (!playBarEl) return;
+    playDurMs = isFinite(durMs) && durMs > 0 ? durMs : 0;
+    playBarEl.hidden = false;
+    if (recSeekEl) recSeekEl.value = 0;
+    updatePlayBar(0);
+  }
+  function hidePlayBar() {
+    if (playBarEl) playBarEl.hidden = true;
+    playDurMs = 0;
+    seeking = false;
+    if (recSeekEl) recSeekEl.value = 0;
+    if (recTimeEl) recTimeEl.textContent = '0:00 / 0:00';
+  }
+  function setPlayDuration(durMs) {
+    if (isFinite(durMs) && durMs > 0) playDurMs = durMs;
+  }
+  function updatePlayBar(ms) {
+    if (!playBarEl || playBarEl.hidden) return;
+    if (playDurMs > 0 && isFinite(ms)) {
+      var pct = Math.max(0, Math.min(1, ms / playDurMs));
+      if (!seeking && recSeekEl) recSeekEl.value = Math.round(pct * 1000);
+    }
+    if (recTimeEl) recTimeEl.textContent = fmtClock(ms) + ' / ' + fmtClock(playDurMs);
+  }
+  function seekPlayback(ms) {
+    if (!playDurMs) return;
+    ms = Math.max(0, Math.min(playDurMs, ms));
+    mixPlayers.forEach(function (a) {
+      try { a.currentTime = ms / 1000; } catch (e) {}
+    });
+    var dry = $('recPlayer');
+    if (dry && dry.src) { try { dry.currentTime = ms / 1000; } catch (e) {} }
+    updatePlayBar(ms);
+    if (window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(ms);
+  }
   function stopMix() {
     if (mixTimer) { clearInterval(mixTimer); mixTimer = null; }
     mixPlayers.forEach(function (a) {
@@ -387,6 +430,7 @@
     });
     mixPlayers = [];
     playingId = null; playingMode = null;
+    hidePlayBar();
   }
   function makeMixTrack(file, volume) {
     var url = URL.createObjectURL(file);
@@ -431,7 +475,15 @@
     if (box._url) URL.revokeObjectURL(box._url);
     box._url = URL.createObjectURL(audio);
     box.src = box._url;
-    box.ontimeupdate = function () { if (window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(box.currentTime * 1000); };
+    var dryDur = r.durationMs || 0;
+    if (box.duration && isFinite(box.duration)) dryDur = box.duration * 1000;
+    showPlayBar(dryDur);
+    box.ontimeupdate = function () {
+      var ms = box.currentTime * 1000;
+      if (box.duration && isFinite(box.duration)) setPlayDuration(box.duration * 1000);
+      updatePlayBar(ms);
+      if (window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(ms);
+    };
     var p = box.play();
     if (p && p.catch) p.catch(function () {});
     setPlayStatus(msg || ('🎧 正在回放：' + (r.song || '') + '（' + fmtTime(r.createdAt) + '）'));
@@ -457,18 +509,27 @@
     players.push(makeMixTrack(backing, backVol));
     if (mode === 'original' && hasOriginalStem) players.push(makeMixTrack(files.vocals, 1));
     playingId = r.id; playingMode = mode;
+    showPlayBar(r.durationMs || 0);
     var label = mode === 'original'
       ? (hasOriginalStem ? '伴奏 + 原唱（原唱声音更大）' : '完整版（原唱 + 伴奏）')
       : (hasAccomp ? '我的录音 + 伴奏' : '我的录音 + 完整版（可能带原唱）');
     setPlayStatus('🎧 正在回放：' + (r.song || '') + ' · ' + label + '（再点一次停止）');
     if (mixTimer) clearInterval(mixTimer);
-    mixTimer = setInterval(function () { if (players[0] && window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(players[0].currentTime * 1000); }, 100);
+    mixTimer = setInterval(function () {
+      if (!players[0]) return;
+      var ms = players[0].currentTime * 1000;
+      if (players[0].duration && isFinite(players[0].duration)) setPlayDuration(players[0].duration * 1000);
+      updatePlayBar(ms);
+      if (window.KaraokeAPI && KaraokeAPI.syncPlayback) KaraokeAPI.syncPlayback(ms);
+    }, 100);
     Promise.all(players.map(whenReady)).then(function () {
       return Promise.all(players.map(function (a) {
         var p = a.play();
         return p && p.catch ? p.catch(function () {}) : Promise.resolve();
       }));
     }).then(function () {
+      if (players[0].duration && isFinite(players[0].duration)) setPlayDuration(players[0].duration * 1000);
+      updatePlayBar(players[0].currentTime * 1000);
       players[0].addEventListener('ended', function () {
         if (playingId === r.id) { stopMix(); setPlayStatus('回放结束。'); }
       });
@@ -513,6 +574,20 @@
   function wire() {
     prefsReady = loadPrefs();
     var box = $('recList');
+    playBarEl = $('recPlayBar'); recSeekEl = $('recSeek'); recTimeEl = $('recTime');
+    if (recSeekEl) {
+      recSeekEl.addEventListener('input', function () {
+        seeking = true;
+        seekPlayback((+this.value / 1000) * playDurMs);
+      });
+      recSeekEl.addEventListener('change', function () { seeking = false; });
+    }
+    var stopBtn = $('recStopBtn');
+    if (stopBtn) stopBtn.addEventListener('click', function () {
+      pauseDryPlayer();
+      stopMix();
+      setPlayStatus('已停止回放。');
+    });
     if (box) {
       box.addEventListener('click', function (e) {
         var b = e.target.closest ? e.target.closest('button[data-act]') : null;

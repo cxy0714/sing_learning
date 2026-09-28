@@ -6,7 +6,7 @@
 <title>K歌练习 · 跟唱打分 · 音高线对比</title>
 <meta name="description" content="网页 K 歌练习：显示歌曲的标准音高线和你唱的线，实时打分，录音可导出分析。纯前端，不上传任何声音。" />
 <link rel="stylesheet" href="style.css?v=8" />
-<link rel="stylesheet" href="karaoke.css?v=10" />
+<link rel="stylesheet" href="karaoke.css?v=11" />
 </head>
 <body>
 
@@ -150,6 +150,11 @@
       这些文件都在你的硬盘上，<b>不会上传、也永远不会进 GitHub 仓库</b>。
     </p>
     <p id="recPlayInfo" class="muted small"></p>
+    <div id="recPlayBar" class="rec-playbar" hidden>
+      <button id="recStopBtn" class="btn btn-ghost btn-sm" type="button">⏹ 停止</button>
+      <input id="recSeek" class="rec-seek" type="range" min="0" max="1000" value="0" step="1" />
+      <span id="recTime" class="muted small">0:00 / 0:00</span>
+    </div>
     <div id="recList" class="rec-list"><p class="muted small">还没有练习记录。唱一段并停下，这里会自动留下你的成绩和录音（可回听）。</p></div>
     <p class="muted small">想把某一段发我分析：点 <b>💾 保存这一段到文件夹</b>（写到你选的文件夹，比如 <code>C:\CloudMusic\recordings</code>），
       然后把 <code>karaoke-*.json</code>（和 <code>.webm</code> 录音）发我。</p>
@@ -201,7 +206,7 @@
 <script src="js/karaoke.js?v=10"></script>
 <script src="js/library.js?v=10"></script>
 <script src="js/record-folder.js?v=8"></script>
-<script src="js/record.js?v=10"></script>
+<script src="js/record.js?v=11"></script>
 <script>
   /* 兜底提示：如果曲库模块没加载成功（浏览器缓存了旧版本 / 网络问题），
      直接明确告诉用户，而不是"点了没反应"。 */
