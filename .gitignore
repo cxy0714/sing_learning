@@ -26,3 +26,8 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
+# 练习录音（绝不入库）
+*.webm
+*.ogg
+recordings/
+karaoke-*.webm

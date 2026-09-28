@@ -72,6 +72,7 @@
    * ============================================================ */
   function init() {
     loadSettings();
+    if (window.KaraokeRec) KaraokeRec.setStatus(setStatus);
     buildVocalSelect();
     bindEvents();
     drawKara();
@@ -166,6 +167,7 @@
         S.buf = new Float32Array(4096);
         S.micSource.connect(S.analyser);
         S.running = true;
+        if (window.KaraokeRec) KaraokeRec.attach(stream);   // 交给记录模块，唱歌时顺便录下来
         requestAnimationFrame(loop);
       };
       if (ctx.state === 'suspended') { return ctx.resume().then(go); }
@@ -834,6 +836,7 @@
         S.freeRec = true;
         S.samples = [];
         S.notes = [];
+        if (window.KaraokeRec) KaraokeRec.start();
         S.result = null;
         S.songPos = 0;
         S.t0Perf = performance.now();
@@ -1223,6 +1226,7 @@
       S.refShiftOct = 0;
       renderResult();
       S.freeRec = true;
+      if (window.KaraokeRec) KaraokeRec.start();          // 开始录你这遍的声音
       try { S.audioEl.currentTime = 0; } catch (e) {}
       S.t0Perf = performance.now();
       S.songPos = 0;
@@ -1250,17 +1254,35 @@
     $('freeRecBtn').textContent = '⏺ 只记录我的音高';
     try { if (S.audioEl && !S.audioEl.paused) S.audioEl.pause(); } catch (e) {}
     S._lyIdx = -1;
-    if (S.refSegs && S.refSegs.length && S.samples.length) {
-      scoreVsRef();
-      renderResult();
-      S.songPos = S.samples[S.samples.length - 1].t;
-      $('freeResult').innerHTML = '✅ 出分啦，看③「成绩单」。评分基准 = 从音频里估出来的旋律线（' + S.refSegs.length +
-        ' 个片段，已按你的八度对齐 ' + ((S.refShiftOct > 0 ? '+' : '') + S.refShiftOct) + ' 个半音）。<br>' +
-        '⚠️ 如果那条灰绿细线和这首歌的旋律<b>不像</b>，这个分就不算数 —— 用「⏺ 只记录我的音高」+ 导出给我分析。';
-    } else {
-      freeSummary();
-    }
-    drawKara();
+    /* 先把录音停掉，再一起存成一条练习记录（音高数据 + 成绩 + 你的声音） */
+    var finish = function (blob) {
+      if (S.refSegs && S.refSegs.length && S.samples.length) {
+        scoreVsRef();
+        renderResult();
+        S.songPos = S.samples[S.samples.length - 1].t;
+        $('freeResult').innerHTML = '✅ 出分啦，看上面成绩单。评分基准 = 从音频里估出来的旋律线（' + S.refSegs.length +
+          ' 个片段，已按你的八度对齐 ' + ((S.refShiftOct > 0 ? '+' : '') + S.refShiftOct) + ' 个半音）。<br>' +
+          '💾 这一段已经留在下面的「练习记录」里（' + (blob ? '含你的录音，可以回听' : '只有音高数据') + '）。';
+      } else {
+        freeSummary();
+      }
+      if (window.KaraokeRec && S.samples.length > 30) {
+        KaraokeRec.save({
+          song: S.audioName, refSource: S.refSourceName, a4: S.a4,
+          range: { low: S.rangeLow, high: S.rangeHigh },
+          durationMs: S.samples[S.samples.length - 1].t,
+          result: S.result,
+          points: S.samples.map(function (s) {
+            var midi = PT.freqToMidi(s.f, S.a4);
+            var tg = refTargetAt(s.t);
+            return [Math.round(s.t), +s.f.toFixed(2), +midi.toFixed(3), tg ? +((midi - tg.midi) * 100).toFixed(1) : null];
+          }),
+          audio: blob
+        });
+      }
+      drawKara();
+    };
+    if (window.KaraokeRec) KaraokeRec.stop(finish); else finish(null);
   }
 
   /** 自由练习（没有参考线时）的总结：只看你自己的音高范围 */
