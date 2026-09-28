@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>K歌练习 · 跟唱打分 · 音高线对比</title>
 <meta name="description" content="网页 K 歌练习：显示歌曲的标准音高线和你唱的线，实时打分，录音可导出分析。纯前端，不上传任何声音。" />
-<link rel="stylesheet" href="style.css" />
-<link rel="stylesheet" href="karaoke.css" />
+<link rel="stylesheet" href="style.css?v=3" />
+<link rel="stylesheet" href="karaoke.css?v=3" />
 </head>
 <body>
 
@@ -186,8 +186,21 @@
   </div>
 </footer>
 
-<script src="js/pitch.js"></script>
-<script src="js/karaoke.js"></script>
-<script src="js/library.js"></script>
+<script src="js/pitch.js?v=3"></script>
+<script src="js/karaoke.js?v=3"></script>
+<script src="js/library.js?v=3"></script>
+<script>
+  /* 兜底提示：如果曲库模块没加载成功（浏览器缓存了旧版本 / 网络问题），
+     直接明确告诉用户，而不是"点了没反应"。 */
+  window.addEventListener('load', function () {
+    if (!window.SongLibrary) {
+      var el = document.getElementById('libInfo');
+      if (el) el.innerHTML = '<span style="color:#f87171">⚠️ 曲库模块加载失败 —— 多半是浏览器缓存了旧版本。' +
+        '请按 <b>Ctrl + F5</b>（Mac: Cmd + Shift + R）强制刷新一次。</span>';
+      var btn = document.getElementById('libPickDir');
+      if (btn) btn.disabled = true;
+    }
+  });
+</script>
 </body>
 </html>
