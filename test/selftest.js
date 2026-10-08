@@ -471,6 +471,16 @@ sec('2. K歌提取与打分');
       '一条曲目同时拿到 音频+人声版+伴奏版+歌词（合并不能丢字段）',
       c2.songs.length + ' 条 / audio=' + (s2.audio ? '有' : '❌无') + ' vocals=' + (s2.vocals ? '有' : '❌无') +
       ' accomp=' + (s2.accomp ? '有' : '❌无') + ' lrc=' + (s2.lrc ? '有' : '❌无'));
+    /* 练习混音（我自己唱的「我的练习+伴奏」）不该被当成曲库里的歌 */
+    const items3 = [
+      { name: '成龙 - 拯救.mp3', rel: 'CloudMusic/成龙 - 拯救.mp3', getFile: G },
+      { name: '成龙 - 拯救 - 我的练习+伴奏 - 20261009-001502.mp3', rel: 'CloudMusic/recordings/成龙 - 拯救 - 我的练习+伴奏 - 20261009-001502.mp3', getFile: G },
+      { name: '张宇 - 月亮惹的祸 (1) - 我的练习+原唱.mp3', rel: 'CloudMusic/recordings/张宇 - 月亮惹的祸 (1) - 我的练习+原唱.mp3', getFile: G }
+    ];
+    const c3 = SL.buildCatalog(items3);
+    chk(c3.songs.length === 1 && c3.songs[0].title === '拯救',
+      '「我的练习+伴奏 / 原唱」混音不进曲库（只留原曲）',
+      c3.songs.map(s => s.artist + ' - ' + s.title).join(' / '));
     /* 本机真有音乐目录时，拿真实文件名跑一遍 */
     try {
       if (fs.existsSync('C:/CloudMusic')) {
@@ -492,6 +502,105 @@ sec('2. K歌提取与打分');
       }
     } catch (e) { chk(false, '真实目录扫描不应报错', e.message); }
   }
+  /* ============================================================ */
+  /*  4b. 练习记录回放要混哪一路音频（回归：不能拿完整版当伴奏）      */
+  /* ============================================================ */
+  sec('4b. 录音回放配对');
+  {
+    const sbR = makeSandbox(makeDom());
+    loadWithHook(sbR, 'js/record.js', 'window.__R={pickBacking,bufferLoudness,planMixLevels,fallbackVolumes};');
+    const R = sbR.__R;
+    chk(!!R && typeof R.pickBacking === 'function', 'record.js 暴露 pickBacking（录音回放配对）');
+
+    const F = (a, v, n) => ({ audio: a || null, vocals: v || null, accomp: n || null, lrc: null });
+    const full = { name: '成龙 - 拯救 (2013再生抒情版).mp3' };
+    const voc = { name: '成龙 - 拯救 (2013再生抒情版).vocals.mp3' };
+    const acc = { name: '成龙 - 拯救 (2013再生抒情版).no_vocals.mp3' };
+
+    /* 这条正是用户反馈的坑：没有 .no_vocals 时，「录音+伴奏」不能再混完整版（完整版带原唱） */
+    const p1 = R.pickBacking(F(full, null, null), 'voice');
+    chk(p1.backing === null, '没有伴奏版时「录音+伴奏」不混完整版（只放录音，避免原唱盖住人声）',
+      p1.backing ? '❌ 混了 ' + p1.backing.name : 'backing=null');
+
+    const p2 = R.pickBacking(F(full, null, acc), 'voice');
+    chk(p2.backing === acc && p2.vocals === null, '有伴奏版时「录音+伴奏」混 .no_vocals');
+
+    const p3 = R.pickBacking(F(full, voc, acc), 'original');
+    chk(p3.backing === acc && p3.vocals === voc, '「原唱版」= 伴奏 + 原唱两轨（有人声版时）');
+
+    const p4 = R.pickBacking(F(full, null, null), 'original');
+    chk(p4.backing === full && p4.vocals === null, '「原唱版」没有分离版时直接放完整版（原唱本来就在里面）');
+
+    const p5 = R.pickBacking(F(null, null, null), 'original');
+    chk(p5.backing === null, '什么音轨都没有时回落到只放录音');
+
+    const p6 = R.pickBacking(F(full, voc, null), 'voice');
+    chk(p6.backing === null && p6.mode === 'voice', '只有 .vocals 没有 .no_vocals 时也不能拿人声版当伴奏');
+  }
+
+  /* ============================================================ */
+  /*  4c. 混音响度对齐（人声 / 原唱 / 伴奏 分贝要相当）               */
+  /* ============================================================ */
+  sec('4c. 混音响度对齐');
+  {
+    const sbL = makeSandbox(makeDom());
+    loadWithHook(sbL, 'js/record.js', 'window.__R={bufferLoudness,planMixLevels,fallbackVolumes};');
+    const R = sbL.__R;
+    const gdb = g => 20 * Math.log10(g);
+
+    /* 响度测量：满度 0.1 的正弦 → RMS 应约 −23.0 dBFS（= 20log10(0.1) − 3.01） */
+    const sr = 8000, n = sr * 2, d = new Float32Array(n);
+    for (let i = 0; i < n; i++) d[i] = 0.1 * Math.sin(2 * Math.PI * 440 * i / sr);
+    const lb = R.bufferLoudness({ sampleRate: sr, getChannelData: () => d });
+    chk(lb && Math.abs(lb.db - (-23.01)) < 0.3, '响度测量：正弦 RMS 对得上 dBFS', lb ? lb.db.toFixed(2) + ' dBFS' : '❌null');
+    chk(lb && Math.abs(lb.peak - 0.1) < 0.005, '响度测量：同时给出真实峰值', lb ? lb.peak.toFixed(3) : '❌');
+    const zero = R.bufferLoudness({ sampleRate: sr, getChannelData: () => new Float32Array(sr) });
+    chk(zero === null, '全静音返回 null（不拿噪声去放大）');
+
+    /* 关键性质：不管原始差多少 dB，混音后 人声 − 伴奏 固定 = 2dB */
+    const tracks = [{ role: 'voice' }, { role: 'accomp' }];
+    const louds = [{ db: -30, peak: 0.3 }, { db: -14, peak: 0.9 }];
+    const plan = R.planMixLevels(tracks, louds);
+    const diff = (plan[0].db + gdb(plan[0].gain)) - (plan[1].db + gdb(plan[1].gain));
+    chk(Math.abs(diff - 2) < 0.05, '混音后「人声比伴奏高 2dB」（分贝相当）', diff.toFixed(2) + ' dB');
+    chk(plan[0].gain > 1, '人声比伴奏轻时会被真的放大（不再被伴奏盖住）', '+' + gdb(plan[0].gain).toFixed(1) + ' dB');
+    const sum = plan[0].gain * 0.3 + plan[1].gain * 0.9;
+    chk(sum <= 0.9501, '整体留白：估计总峰值不超 0.95（不削顶）', sum.toFixed(3));
+
+    /* 用户那次录音的真实数字：录音 −22.7dBFS / 伴奏 −14.3dBFS */
+    const realPlan = R.planMixLevels(tracks, [{ db: -22.7, peak: 0.369 }, { db: -14.3, peak: 0.875 }]);
+    chk(gdb(realPlan[0].gain) > 3, '实测那遍录音会被抬高 3dB 以上', '+' + gdb(realPlan[0].gain).toFixed(1) + ' dB');
+    chk(gdb(realPlan[0].gain) - gdb(realPlan[1].gain) > 9, '人声与伴奏的增益差 ≥ 9dB（原本几乎相等，等于人声被埋）',
+      (gdb(realPlan[0].gain) - gdb(realPlan[1].gain)).toFixed(1) + ' dB');
+
+    /* 上限/下限：再轻也不无限放大，再响也不无限压 */
+    const cap = R.planMixLevels(tracks, [{ db: -60, peak: 0.001 }, { db: -20, peak: 0.05 }]);
+    chk(Math.abs(cap[0].gain - Math.pow(10, 18 / 20)) < 1e-6, '人声最多只补 18dB（再多就把底噪也放大）',
+      '+' + gdb(cap[0].gain).toFixed(1) + ' dB');
+    const floor = R.planMixLevels(tracks, [{ db: 10, peak: 0.5 }, { db: -20, peak: 0.05 }]);
+    chk(Math.abs(floor[0].gain - Math.pow(10, -24 / 20)) < 1e-6, '超过基准的人声最多压 24dB');
+
+    /* 没有 Web Audio（不能放大）时的兜底：整体压低，但比例不变 */
+    const vols = R.fallbackVolumes(plan);
+    chk(vols.every(v => v >= 0 && v <= 1), '兜底音量都落在 0~1', vols.map(v => v.toFixed(2)).join(' / '));
+    chk(Math.abs(gdb(vols[0]) - gdb(vols[1]) - (gdb(plan[0].gain) - gdb(plan[1].gain))) < 1e-6,
+      '兜底时人声/伴奏的相对比例保持不变');
+    chk(vols[0] > vols[1], '兜底时人声仍然比伴奏响');
+
+    /* 量不出响度 → 退回固定比例，不能崩 */
+    const none = R.planMixLevels(tracks, [null, null]);
+    chk(none[0].gain === 1 && none[1].gain === 0.6, '响度测量失败时退回固定比例（人声 1 / 伴奏 0.6）');
+
+    /* 有限幅总线时允许更热：整体响度补回来，但峰值由限幅器兜住 */
+    const hot = R.planMixLevels(tracks, louds, 1.5);
+    const hotSum = hot[0].gain * 0.3 + hot[1].gain * 0.9;
+    chk(hotSum <= 1.5001, '限幅模式：估计总峰值仍然受限（≤1.5，交给限幅器）', hotSum.toFixed(3));
+    chk(gdb(hot[0].gain) > gdb(plan[0].gain) + 3, '限幅模式：人声实际增益更大（响度不会被"整体压低"吃掉）',
+      '+' + gdb(hot[0].gain).toFixed(1) + ' dB  vs  无音频图 ' + gdb(plan[0].gain).toFixed(1) + ' dB');
+    const hotDiff = (hot[0].db + gdb(hot[0].gain)) - (hot[1].db + gdb(hot[1].gain));
+    chk(Math.abs(hotDiff - 2) < 0.05, '限幅模式下人声仍然只比伴奏高 2dB', hotDiff.toFixed(2) + ' dB');
+  }
+
   /* ============================================================ */
   /*  5. 统一记录文件夹                                            */
   /* ============================================================ */

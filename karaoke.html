@@ -55,8 +55,8 @@
       <p id="songInfo" class="status">在下面曲库里点一首歌；播放器、开始唱歌和提取进度都在这里。</p>
       <p class="muted small" style="border-left:3px solid #4ade80;padding-left:10px">
         💡 <b>线更准的秘诀</b>：有 <code>xxx.vocals.mp3</code>（Demucs 人声分离版）时，
-        <b>参考线从人声版提取</b>（干净），<b>播放的却是完整伴奏版</b> —— 两边自动配对。
-        没有分离版时就用完整版直接估线（伴奏一满可能被带跑，这时调下面的人声范围 / 滤波）。
+        <b>参考线从人声版提取</b>（干净），<b>播放的却是完整版（原唱 + 伴奏）</b> —— 两边自动配对。
+        没有分离版时就用完整版直接估线（<b>注意：播放的就是带原唱的完整版</b>，伴奏一满可能被带跑，这时调下面的人声范围 / 滤波）。
       </p>
       <p class="muted small">
         ⚠️ 必须<b>戴耳机</b>听歌，否则麦克风会把伴奏一起收进去。<br>
@@ -203,10 +203,10 @@
 </footer>
 
 <script src="js/pitch.js?v=8"></script>
-<script src="js/karaoke.js?v=10"></script>
-<script src="js/library.js?v=10"></script>
+<script src="js/karaoke.js?v=11"></script>
+<script src="js/library.js?v=12"></script>
 <script src="js/record-folder.js?v=8"></script>
-<script src="js/record.js?v=11"></script>
+<script src="js/record.js?v=13"></script>
 <script>
   /* 兜底提示：如果曲库模块没加载成功（浏览器缓存了旧版本 / 网络问题），
      直接明确告诉用户，而不是"点了没反应"。 */

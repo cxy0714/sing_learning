@@ -833,7 +833,7 @@
       var box = $('audioBox') || ($('audioName') ? $('audioName').parentNode : null);
       if (box) box.appendChild(S.audioEl);
       S.audioEl.addEventListener('play', function () {
-        if (!S.freeRec) setStatus('▶ 正在播放（完整伴奏版）。要打分就点「🎤 开始唱歌」。');
+        if (!S.freeRec) setStatus('▶ 正在播放（完整版：原唱 + 伴奏）。要打分就点「🎤 开始唱歌」。');
       });
       S.audioEl.addEventListener('ended', function () {
         if (S.freeRec) stopFreeRec(true);
@@ -847,11 +847,14 @@
     S.audioEl.src = S.audioUrl;
 
     var an = $('audioName');
-    if (an) an.textContent = '▶ ' + f.name + (S.refSourceName ? ' ｜参考线：人声版' : '');
+    if (an) an.textContent = '▶ ' + f.name + (S.refSourceName ? ' ｜参考线：人声版' : ' ｜完整版（含原唱）');
     var fr = $('freeRecBtn'); if (fr) fr.disabled = false;
     var sr = $('syncRecBtn'); if (sr) sr.disabled = false;
     setStatus('已载入 <b>' + f.name + '</b>'
-      + (S.refSourceName ? '，参考线从 <b>' + S.refSourceName + '</b> 提取（播放的是完整伴奏版）' : '')
+      + (S.refSourceName
+          ? '，参考线从 <b>' + S.refSourceName + '</b> 提取（播放的是完整版：原唱 + 伴奏）'
+          : '：<b>这首没有伴奏版</b>（<code>.no_vocals</code>），播放的就是完整版、带原唱'
+            + ' —— 一定戴耳机，否则原唱会被麦克风录进你的录音，音高线也会跟着原唱跑')
       + '，正在后台估旋律线…');
     extractFromFile(refFile || f);
   }

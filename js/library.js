@@ -15,6 +15,8 @@
   var LRC_RE = /\.lrc$/i;
   var NCM_RE = /\.ncm$/i;
   var SUF_RE = /\.(vocals|no_vocals)$/i;
+  /* 练习混音产物（「我的练习+伴奏」这类自己唱的成品）不是曲库里的歌，别列进去 */
+  var MIX_RE = /我的练习|练习\+|练习混音/;
   var EXT_RANK = { '.mp3': 1, '.flac': 2, '.m4a': 3, '.wav': 4, '.aac': 5, '.ogg': 6, '.opus': 7 };
 
   /* ---------- 纯函数（可单测） ---------- */
@@ -49,6 +51,7 @@
       }
       if (NCM_RE.test(name)) { ncmCount++; return; }
       if (!AUDIO_RE.test(name)) return;
+      if (MIX_RE.test(name)) return;                          // 自己唱出来的练习混音，不是歌
       var suf = (base.match(SUF_RE) || [''])[0].toLowerCase();
       var songBase = base.replace(SUF_RE, '');
       var key = folder + '|' + songBase;
@@ -359,7 +362,7 @@
     var refItem = (preferVocals && s.vocals) ? s.vocals : null; // 参考线：人声分离版
     if (!playItem) { info('这首歌没有可播放的音频（可能只有 .ncm，需要先转换）。'); return; }
     info('正在载入：<b>' + s.artist + ' - ' + s.title + '</b>'
-      + (refItem ? '（播放完整伴奏版 · 参考线用人声版）' : '') + ' …');
+      + (refItem ? '（播放完整版：原唱 + 伴奏 · 参考线用人声版）' : '（没有伴奏版，播放的是带原唱的完整版）') + ' …');
     Promise.all([
       playItem.getFile(),
       s.lrc ? s.lrc.getFile().catch(function () { return null; }) : Promise.resolve(null),
@@ -374,7 +377,9 @@
         accompName: s.accomp ? s.accomp.name : ''
       });
       info('✅ 已载入 <b>' + s.artist + ' - ' + s.title + '</b>'
-        + (r[2] ? '：播放的是<b>完整伴奏版</b>，参考线来自<b>人声分离版</b>（线更干净）。' : '：参考线直接从这首歌里估。')
+        + (r[2]
+            ? '：播放的是<b>完整版（原唱 + 伴奏）</b>，参考线来自<b>人声分离版</b>（线更干净）。'
+            : '：<b>这首没有伴奏版</b>，播放的是<b>完整版（带原唱）</b> —— 戴耳机练，否则原唱会被麦克风录进你的录音；参考线直接从这首歌里估。')
         + '<br>准备好就点 <b>「🎤 开始唱歌」</b> —— <b>随时可以停</b>，按你唱到的部分算分。');
     }).catch(function (e) {
       info('读文件失败：' + (e && e.message ? e.message : e) + '（可能是授权失效，重新选一次文件夹）');
