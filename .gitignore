@@ -12,6 +12,8 @@
 *.lrc
 # 录音与导出（练习数据）
 karaoke-*.json
+karaoke-*.csv
+karaoke-*.txt
 pitch-*.json
 pitch-*.csv
 range-log-*.json
@@ -31,8 +33,9 @@ __pycache__/
 .idea/
 .DS_Store
 Thumbs.db
-# 练习录音（绝不入库）
+# 练习录音与混音成品（绝不入库）
 *.webm
 *.ogg
 recordings/
 karaoke-*.webm
+*我的练习*
