@@ -32,6 +32,11 @@ param(
   [switch]$SkipExisting
 )
 $ErrorActionPreference = 'Stop'
+# Windows 控制台默认是 GBK 代码页，demucs 一开始就会 print 曲名；文件名里有重音符号
+# （"Schönberg"、"Céline"…）时 Python 直接 UnicodeEncodeError 退出，分离一步都没跑。
+# 强制子进程的 Python 用 UTF-8 输出，编码就不再挡住分离。
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
 $envDir = Join-Path $env:USERPROFILE '.demucs-env'
 $py = Join-Path $envDir 'Scripts\python.exe'
 if (-not (Test-Path $py)) { throw "没找到 Demucs 环境：$envDir`n先执行：`n  python -m venv `"$envDir`"`n  & `"$py`" -m pip install demucs numpy" }
