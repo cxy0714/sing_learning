@@ -243,3 +243,19 @@ tr.out td { opacity: .42; }
 /* 页面互跳链接 */
 .back { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
 .back:hover { color: #fff; }
+
+/* ===== 换声区 & 音域趋势 ===== */
+.trend-chart { height: 300px; }
+.pass-tag {
+  display: inline-block; font-size: 11.5px; line-height: 1.5;
+  border-radius: 999px; padding: 0 8px; margin: 1px 4px 1px 0;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.pass-tag.ok { color: var(--ok); border-color: #24503a; }
+.pass-tag.warn { color: var(--warn); border-color: #4a3a1e; }
+.pass-tag.bad { color: var(--bad); border-color: #4a2740; }
+tr.pass-break td { background: rgba(251,191,36,.14); }
+#passResult .muted { color: var(--muted); }
+@media (max-width: 860px) {
+  .trend-chart { height: 240px; }
+}

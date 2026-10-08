@@ -228,7 +228,7 @@ sec('2. K歌提取与打分');
   const dom2 = makeDom();
   const sb2 = makeSandbox(dom2);
   load(sb2, 'js/pitch.js');
-  loadWithHook(sb2, 'js/app.js', 'window.__T={S,loop,analyze,updateReadout,computeStats,buildExport,drawChart,renderStats,applyRange,onRangePreset,isOutOfRange,startPractice,clearLive,updateShift,playShiftTone,recordRangeNote,voiceText,renderRangeLog,loadRangeLog,todayKey};');
+  loadWithHook(sb2, 'js/app.js', 'window.__T={S,loop,analyze,updateReadout,computeStats,buildExport,drawChart,renderStats,applyRange,onRangePreset,isOutOfRange,startPractice,clearLive,updateShift,playShiftTone,recordRangeNote,voiceText,renderRangeLog,loadRangeLog,todayKey,trendSeries,noteHistogram,rangeHoles,analyzePassaggio,currentPassaggio,passCompare,refBands,median,drawTrend,renderPassaggio,renderPassTable,updatePassStatus,loadPassLog,savePassLog,startPassScan,scanFeed,finishPassScan,abortPassScan,onPassManual,defaultScanStart,passaggioJSON,trendCSV,scanCSV};');
   const T = sb2.__T, SA = T.S, PT2 = sb2.PitchTool;
   chk(SA.ladderOctave === 3 && SA.rangeLow === 45 && SA.rangeHigh === 69, '默认第 3 组 + 音域 A2–A4', SA.ladderOctave + ' / ' + PT2.midiToName(SA.rangeLow) + '-' + PT2.midiToName(SA.rangeHigh));
 
@@ -304,6 +304,116 @@ sec('2. K歌提取与打分');
     lg2 = JSON.parse(sb2.localStorage.getItem('vpm.range.v1'));
     const d2 = lg2[Object.keys(lg2)[0]];
     chk(d2 && d2.low === 67 && d2.high === 67, '稳定唱住的音会被记进音域', d2 ? (d2.low + '~' + d2.high) : '无');
+  }
+
+  sec('3c. 换声区扫描 + 音域趋势');
+  {
+    /* 每日音域趋势 & 音域空洞：61~63（C#4~D#4）从来没被稳定唱到过 */
+    const fake = {
+      '2026-09-08': { low: 48, high: 60, notes: { 48: 1, 55: 2, 60: 3 } },
+      '2026-09-10': { low: 48, high: 64, notes: { 48: 2, 55: 1, 58: 2, 64: 3 } },
+      '2026-09-12': { low: 50, high: 67, notes: { 50: 1, 55: 4, 65: 2, 67: 2 } }
+    };
+    sb2.localStorage.setItem('vpm.range.v1', JSON.stringify(fake));
+    const ser = T.trendSeries(T.loadRangeLog());
+    chk(ser.length === 3 && ser[0].date === '2026-09-08' && ser[2].date === '2026-09-12',
+      '趋势序列按日期升序', ser.map(x => x.date).join(','));
+    chk(ser[2].low === 50 && ser[2].high === 67 && ser[2].semis === 17, '趋势序列带最低/最高音和跨度',
+      ser[2].low + '-' + ser[2].high);
+    const hist = T.noteHistogram(T.loadRangeLog());
+    chk(hist[55] === 7 && hist[48] === 3, '音高直方图按天累加', '55→' + hist[55] + ', 48→' + hist[48]);
+    const hl = T.rangeHoles(T.loadRangeLog());
+    chk(hl.ok && hl.low === 48 && hl.high === 67, '音域空洞：上下界取自所有记录', hl.low + '-' + hl.high);
+    chk(hl.holes.indexOf(63) >= 0 && hl.holes.indexOf(66) >= 0, '从没唱到过的音被找出来', hl.holes.join(','));
+    chk(hl.runs.length === 1 && hl.runs[0].lo === 61 && hl.runs[0].hi === 63,
+      '只有上半段的连续空洞算换声区候选（下半段的 51~54 不算）', JSON.stringify(hl.runs));
+
+    /* analyzePassaggio：纯函数，直接喂逐音数据 */
+    const flat = [60, 61, 62, 63, 64, 65, 66, 67].map(m =>
+      ({ midi: m, frames: 30, steadyFrames: 28, steadyRatio: .93, centsSd: 12, rmsMed: .05 }));
+    const rFlat = T.analyzePassaggio(flat);
+    chk(!rFlat.ok && /平顺/.test(rFlat.reason), '全都很稳 → 不报换声点', rFlat.reason);
+    chk(!T.analyzePassaggio([{ midi: 60, frames: 30, centsSd: 10, steadyRatio: .9, rmsMed: .05 }]).ok,
+      '有效音太少 → 不判定');
+
+    const broken = [60, 61, 62, 63, 64].map(m =>
+      ({ midi: m, frames: 30, steadyFrames: 28, steadyRatio: .93, centsSd: 12, rmsMed: .05 }))
+      .concat([65, 66, 67].map(m =>
+        ({ midi: m, frames: 30, steadyFrames: 6, steadyRatio: .2, centsSd: 70, rmsMed: .12 })));
+    const rB = T.analyzePassaggio(broken);
+    chk(rB.ok && rB.breakMidi === 65, '抖动变大 + 唱不住 + 音量加大 → 换声点 F4',
+      rB.ok ? PT2.midiToName(rB.breakMidi) : rB.reason);
+    chk(rB.zone.lo === 65 && rB.zone.hi === 67, '换声区取换声点往上 2 个半音', JSON.stringify(rB.zone));
+    chk(rB.list.find(n => n.midi === 65).flags.indexOf('push') >= 0, '音量突然加大被标成 push',
+      JSON.stringify(rB.list.find(n => n.midi === 65).flags));
+
+    const ceiling = [60, 61, 62, 63, 64].map(m =>
+      ({ midi: m, frames: 30, steadyFrames: 28, steadyRatio: .93, centsSd: 12, rmsMed: .05 }))
+      .concat([65, 66].map(m => ({ midi: m, frames: 2, steadyFrames: 0, steadyRatio: 0, centsSd: 0, rmsMed: 0 })));
+    const rC = T.analyzePassaggio(ceiling);
+    chk(!rC.ok && rC.ceilingMidi === 65 && /上限/.test(rC.reason),
+      '往上基本唱不出来 → 报「高音上限」而不是换声点', rC.reason);
+
+    chk(T.passCompare(60).indexOf('交界处') >= 0, 'C4 是男低音/男中音换声区的交界音，两个都报',
+      T.passCompare(60));
+    chk(T.passCompare(61).indexOf('男中音换声区') >= 0, 'C#4 落在男中音换声区里', T.passCompare(61));
+    chk(T.passCompare(61).indexOf('还差 3 个半音') >= 0, 'C#4 离男高音换声区下限 E4 差 3 个半音', T.passCompare(61));
+    chk(T.passCompare(67).indexOf('已经在男高音换声区') >= 0, 'G4 已在男高音换声区里', T.passCompare(67));
+
+    SA.rangeHigh = 67;
+    chk(T.defaultScanStart() === 56, '默认起始音 = 音域上限往下留一个八度', T.defaultScanStart());
+    SA.rangeHigh = 69;
+
+    /* 端到端：startPassScan -> scanFeed（喂帧）-> finishPassScan */
+    sb2.localStorage.removeItem('vpm.passaggio.v1');
+    dom2.els['passStartSel'].value = '60';
+    SA.running = true; SA.scan = null;
+    T.startPassScan();
+    chk(!!SA.scan && SA.scan.active && SA.scan.notes.length === 12 && SA.scan.notes[0].midi === 60,
+      '扫描开始：12 个音、从 C4 起', SA.scan ? SA.scan.notes.length + ' 个音' : 'null');
+    const t0 = 500000, noteMs = 3400;
+    for (let el = 0; el < 12 * noteMs; el += 60) {          // 像真实 rAF 一样逐帧喂进去
+      const i = Math.floor(el / noteMs);
+      let midi = 60 + i;
+      if (i >= 5) midi += ((el / 60) % 2 ? 0.8 : -0.8);     // 上半段开始抖 ±80 音分
+      T.scanFeed(t0 + el, { freq: PT2.midiToFreq(midi, 440), midi: midi, conf: .9, rms: i >= 5 ? .12 : .05 });
+    }
+    T.scanFeed(t0 + 12 * noteMs + 20, null);                // 越过最后一个音 → 自动收尾
+    chk(!SA.scan.active, '扫完 12 个音自动结束');
+    const plog = T.loadPassLog();
+    chk((plog.scans || []).length === 1, '扫描结果写入 vpm.passaggio.v1', (plog.scans || []).length + ' 条');
+    chk(plog.scans[0].breakMidi === 65, '端到端：换声点判为 F4', String(plog.scans[0].breakMidi));
+    chk(plog.scans[0].notes.length === 12 && plog.scans[0].notes[0].frames >= 30,
+      '逐音数据被保存（每个音约 37 帧）', plog.scans[0].notes[0].frames);
+    chk(plog.scans[0].notes[6].centsSd > 60, '上半段的抖动被算出来', plog.scans[0].notes[6].centsSd.toFixed(0));
+    const cur = T.currentPassaggio();
+    chk(cur.source === 'scan' && cur.midi === 65, '当前换声点用扫描结果', cur.source + '/' + cur.midi);
+    chk(String(dom2.els['passBody']._html).indexOf('pass-break') >= 0, '扫描表格渲染并标出换声点那一行');
+
+    T.onPassManual('67');
+    chk(T.currentPassaggio().source === 'manual' && T.currentPassaggio().midi === 67, '手动指定换声点优先');
+    T.onPassManual('');
+    chk(T.currentPassaggio().source === 'scan' && T.currentPassaggio().midi === 65,
+      '改回「自动」→ 回到扫描结果');
+
+    const pj = JSON.parse(T.passaggioJSON());
+    chk(pj.passaggio && pj.passaggio.note === 'F4' && pj.passaggio.zoneHigh === 'G4',
+      '换声区导出 JSON 正确', JSON.stringify(pj.passaggio));
+    chk(pj.rangeTrend.length === 3 && pj.neverSungNotes.indexOf('D#4') >= 0,
+      '趋势 + 从没唱到过的音都进了 JSON', pj.neverSungNotes.join(','));
+    chk(pj.scans.length === 1 && pj.scans[0].notes.length === 12, '扫描明细进了 JSON');
+
+    const tc = T.trendCSV(), sc2 = T.scanCSV();
+    chk(tc.indexOf('date,low_note,high_note') === 1 && tc.split('\n').length === 4,
+      '趋势 CSV = 表头 + 3 行', tc.split('\n').length);
+    chk(sc2.indexOf('note,midi,cover_percent') === 1 && sc2.split('\n').length === 13,
+      '扫描 CSV = 表头 + 12 行', sc2.split('\n').length);
+
+    T.drawTrend(); T.renderPassTable(); T.updatePassStatus(); T.renderPassaggio();
+    chk(String(dom2.els['passStatus']._html).indexOf('每日音域记录') >= 0 &&
+        String(dom2.els['passStatus']._html).indexOf('扫描') >= 0,
+      '状态行统计天数与扫描次数', dom2.els['passStatus']._html);
+    chk(true, '趋势图 / 结果框 / 表格渲染无异常');
   }
   /* ============================================================ */
   /*  4. 本地曲库（扫描 / 搜索 / 合并）                              */

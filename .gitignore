@@ -16,6 +16,8 @@ pitch-*.json
 pitch-*.csv
 range-log-*.json
 range-log-*.csv
+passaggio-*.json
+passaggio-*.csv
 *-manifest.json
 tools/vocals/
 # 本地环境（体积巨大，且与本网站无关）

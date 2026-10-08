@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>唱歌音准实时监测 · do re mi 调音器</title>
 <meta name="description" content="网页版实时音高检测：用 do re mi fa sol la xi 显示你唱的音、偏差音分和标准频率，可录音、导出数据用于分析音准练习。" />
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 
@@ -248,6 +248,65 @@
     <p class="muted small">KTV 和伴奏软件里的「降调」按钮，一般按一下 = 1 个半音（有的软件一下 = 2 个半音，注意看说明）。</p>
   </section>
 
+  <!-- ============ 换声区 & 音域趋势 ============ -->
+  <section class="card card--wide">
+    <div class="card-head">
+      <h2>⑧ 换声区 &amp; 音域趋势（想练男高音就看这里）</h2>
+      <div class="row wrap">
+        <label class="field">起始音 <select id="passStartSel" class="mini-select"></select></label>
+        <button id="passUseRangeBtn" class="btn btn-ghost btn-sm">按我的音域上限</button>
+        <button id="passScanBtn" class="btn btn-sm">🎙 开始换声区扫描</button>
+        <button id="passSaveBtn" class="btn btn-ghost btn-sm">💾 保存到记录文件夹</button>
+        <button id="passExportBtn" class="btn btn-ghost btn-sm">⬇ 导出 JSON / CSV</button>
+        <button id="passClearBtn" class="btn btn-ghost btn-sm danger">清空扫描</button>
+      </div>
+    </div>
+
+    <p id="passStatus" class="status"></p>
+
+    <canvas id="trendChart" class="chart trend-chart"></canvas>
+    <p class="muted small">
+      横轴 = 日期，纵轴 = 音高。每根竖线是那天<b>稳定唱到的最低~最高音</b>（紫点=最高音，蓝点=最低音）；
+      横向的浅色带是三个男声的<b>换声区常见位置</b>（只作参考，个体差异很大）；
+      右侧的红色小块 = 在你的音域里<b>从来没稳定唱到过</b>的音；橙色虚线 = 当前的<b>换声点候选</b>。
+    </p>
+
+    <div class="row wrap">
+      <label class="field">我的换声点
+        <select id="passManualSel" class="mini-select"></select>
+      </label>
+      <span class="muted small">（在这里改过之后，趋势图和导出都会用你指定的这个）</span>
+    </div>
+
+    <div id="passResult" class="prac-result"></div>
+
+    <div class="table-scroll">
+      <table class="stat-table">
+        <thead><tr><th>音</th><th>唱到</th><th>±50 音分内</th><th>抖动</th><th>音量</th><th>标记</th></tr></thead>
+        <tbody id="passBody"><tr><td colspan="6" class="muted center">还没有扫描记录</td></tr></tbody>
+      </table>
+    </div>
+
+    <details class="tip">
+      <summary>换声点是怎么算出来的？（口径说明，建议先看）</summary>
+      <p><b>为什么男高音要盯这个：</b>决定声部（男高音 / 男中音 / 男低音）的是声带长度厚度和声道大小，练不出来；
+        但「换声区唱得好不好」几乎全看技术。换声点 = 从胸声往上、发声方式必须<b>换挡</b>的那个音，
+        男高音通常在 E4–A4 附近，男中音在 C4–E♭4 附近。练混声就是练这一段，硬顶只会伤声带。</p>
+      <p><b>扫描怎么做的：</b>从你选的起始音开始，逐半音往上，每个音<b>先听 1.2 秒参考音、再跟着唱 2.2 秒</b>，
+        一共 12 个音（一个八度）。请<b>戴耳机</b>，音量保持和平时一样。</p>
+      <p><b>换声点怎么判：</b>基线取这次扫描里<b>最下面那 1/3 的音</b>（它们一定还在胸声里），然后在往上走的音里找四条线索，
+        任意两条连着的音同时出现才算（避免偶发抖动误判）——
+        ① 音高抖动突然明显变大（往上硬顶）；② 唱住的比例骤降；③ 音量突然要加大到 1.8 倍以上；
+        ④ 音量突然掉到一半（换到假声 / 漏气）。如果从某个音往上<b>基本唱不出来</b>，那报出来的是
+        「当前高音上限」而不是换声点 —— 这两件事不一样，别搞混。</p>
+      <p><b>「没唱到过」是什么：</b>把每天记录里稳定唱住的音汇总起来，在你的最低~最高音之间，
+        一次都没被稳定唱到过的音会画在右边。音域中间的洞往往就是换声区；但底部或顶部的一整段空缺
+        更可能只是「还没试过」，所以只把<b>音域上半段、宽 2~7 个半音</b>的洞拿来当换声区候选。</p>
+      <p>所有数据仍然只存在<b>浏览器本地</b>（<span class="mono">localStorage: vpm.passaggio.v1</span> 和
+        <span class="mono">vpm.range.v1</span>），不上传、不进仓库。</p>
+    </details>
+  </section>
+
   <!-- ============ 说明 ============ -->
   <section class="card card--wide">
     <div class="card-head"><h2>使用须知 / 怎么练</h2></div>
@@ -295,6 +354,6 @@
 
 <script src="js/pitch.js?v=8"></script>
 <script src="js/record-folder.js?v=8"></script>
-<script src="js/app.js?v=8"></script>
+<script src="js/app.js?v=9"></script>
 </body>
 </html>

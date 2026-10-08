@@ -66,7 +66,9 @@
     /* 本地记录 */
     sessions: [],
     /* 测试 */
-    pracBusy: false
+    pracBusy: false,
+    /* 换声区扫描 */
+    scan: null, lastScanResult: null
   };
 
   /* ============================================================
@@ -81,9 +83,12 @@
     buildRefTable();
     buildPracticeSelect();
     buildShiftSelects();
+    buildPassStartSelect();
+    buildPassManualSelect();
     renderRangeInfo();
     renderRangeLog();
     renderRangeFolder();
+    renderPassaggio();
     if (window.RecordFolder) {
       window.RecordFolder.onChange(renderRangeFolder);
       window.RecordFolder.load().then(renderRangeFolder).catch(renderRangeFolder);
@@ -142,7 +147,37 @@
       if (!confirm('清空所有日期的音域记录？（只影响浏览器本地记录）')) return;
       saveRangeLog({});
       renderRangeLog();
+      drawTrend();
       setStatus('已清空音域记录。');
+    });
+    /* ⑧ 换声区 & 音域趋势 */
+    var passScanBtn = $('passScanBtn');
+    if (passScanBtn) passScanBtn.addEventListener('click', startPassScan);
+    var passUseRangeBtn = $('passUseRangeBtn');
+    if (passUseRangeBtn) passUseRangeBtn.addEventListener('click', function () {
+      var sel = $('passStartSel');
+      var m = defaultScanStart();
+      if (sel) sel.value = String(m);
+      setStatus('起始音已设为 <b>' + PT.midiToName(m) + '</b>（从你的音域上限往下留一个八度），' +
+                '这样最后一个音正好落在你的最高音上。点「🎙 开始换声区扫描」开始。');
+    });
+    var passManualSel = $('passManualSel');
+    if (passManualSel) passManualSel.addEventListener('change', function () { onPassManual(this.value); });
+    var passSaveBtn = $('passSaveBtn');
+    if (passSaveBtn) passSaveBtn.addEventListener('click', savePassToFolder);
+    var passExportBtn = $('passExportBtn');
+    if (passExportBtn) passExportBtn.addEventListener('click', function () {
+      if (!hasPassData()) { setStatus('还没有音域趋势或换声区扫描数据可以导出。'); return; }
+      downloadPassFiles();
+    });
+    var passClearBtn = $('passClearBtn');
+    if (passClearBtn) passClearBtn.addEventListener('click', function () {
+      if (!confirm('清空所有换声区扫描记录？（不影响每日音域记录）')) return;
+      var lg = loadPassLog();
+      lg.scans = [];
+      savePassLog(lg);
+      renderPassaggio();
+      setStatus('已清空换声区扫描记录。');
     });
     $('liveWin').addEventListener('change', function () { S.liveWin = parseInt(this.value, 10) || 10; saveSettings(); });
     $('scopeChk').addEventListener('change', function () {
@@ -237,6 +272,7 @@
 
   function stopMic() {
     if (S.recording) toggleRecord();   // 顺序很重要：先结束录音
+    if (S.scan && S.scan.active) abortPassScan();   // 换声区扫描没有声音就没意义了
     S.running = false;
     if (S.stream) {
       S.stream.getTracks().forEach(function (t) { t.stop(); });
@@ -310,6 +346,7 @@
     pushLive(ts, cur);
 
     updateReadout(cur);
+    if (S.scan && S.scan.active) scanFeed(ts, cur);
     if (S.recording) maybeRecord(cur, ts);
     if (S.recording && ts - S.lastStatsAt > 800) {
       S.lastStatsAt = ts;
@@ -841,7 +878,12 @@
     d.updatedAt = new Date().toISOString();
     log[k] = d;
     saveRangeLog(log);
-    if (changed || Date.now() - _rangeDirty > 1500) { _rangeDirty = Date.now(); renderRangeLog(); }
+    if (changed || Date.now() - _rangeDirty > 1500) {
+      _rangeDirty = Date.now();
+      renderRangeLog();
+      drawTrend();
+      updatePassStatus();
+    }
   }
   function voiceByLow(m) {
     var best = null;
@@ -1021,8 +1063,694 @@
     body.querySelectorAll('button[data-del]').forEach(function (b) {
       b.addEventListener('click', function () {
         var k = b.dataset.del;
-        var lg = loadRangeLog(); delete lg[k]; saveRangeLog(lg); renderRangeLog();
+        var lg = loadRangeLog(); delete lg[k]; saveRangeLog(lg); renderRangeLog(); drawTrend(); updatePassStatus();
       });
+    });
+  }
+
+  /* ============================================================
+   * 换声区（passaggio）扫描 + 音域趋势
+   *   ① 趋势图：把 vpm.range.v1 的每日最低/最高音画成时间轴
+   *   ② 换声区扫描：从起始音往上逐半音，每音「先听参考音、再跟着唱」，
+   *      记录每个音的抖动 / 唱住比例 / 音量，用来找换声点（换声区）
+   *   数据仍然只存在浏览器本地 + 用户自己授权的记录文件夹。
+   * ============================================================ */
+  var PASS_KEY = 'vpm.passaggio.v1';
+  var SCAN_LISTEN_MS = 1200;   // 每个音先听 1.2 秒参考音
+  var SCAN_SING_MS = 2200;     // 再跟着唱 2.2 秒
+  var SCAN_STEPS = 12;         // 一次扫一个八度（12 个半音）
+  /* 男声第一换声区的常见位置：仅作参考，个体差异很大 */
+  var PASS_REF = [
+    { id: 'bass',     name: '男低音', lo: 'A3', hi: 'C4' },
+    { id: 'baritone', name: '男中音', lo: 'C4', hi: 'E♭4' },
+    { id: 'tenor',    name: '男高音', lo: 'E4', hi: 'A4' }
+  ];
+
+  function median(a) {
+    var b = (a || []).filter(function (x) { return typeof x === 'number' && isFinite(x); })
+      .sort(function (x, y) { return x - y; });
+    if (!b.length) return 0;
+    var i = Math.floor(b.length / 2);
+    return b.length % 2 ? b[i] : (b[i - 1] + b[i]) / 2;
+  }
+  function loadPassLog() {
+    try { return JSON.parse(localStorage.getItem(PASS_KEY) || '{}'); } catch (e) { return {}; }
+  }
+  function savePassLog(o) {
+    try { localStorage.setItem(PASS_KEY, JSON.stringify(o)); } catch (e) {}
+  }
+  function hasPassData() {
+    return !!((loadPassLog().scans || []).length || trendSeries(loadRangeLog()).length);
+  }
+  function refBands() {
+    return PASS_REF.map(function (r) {
+      return { id: r.id, name: r.name, lo: r.lo, hi: r.hi,
+               loMidi: PT.midiFromName(r.lo), hiMidi: PT.midiFromName(r.hi) };
+    });
+  }
+
+  /** 每日音域记录 -> 按日期升序的趋势序列 */
+  function trendSeries(log) {
+    log = log || {};
+    return Object.keys(log).sort().map(function (k) {
+      var d = log[k];
+      if (!d || d.low === null || d.high === null || d.low === undefined || d.high === undefined) return null;
+      return { date: k, low: d.low, high: d.high, semis: d.high - d.low };
+    }).filter(function (x) { return !!x; });
+  }
+
+  /** 汇总所有日期里，每个音被「稳定唱住」过多少次 */
+  function noteHistogram(log) {
+    var h = {}, l = log || {};
+    Object.keys(l).forEach(function (k) {
+      var n = l[k] && l[k].notes ? l[k].notes : {};
+      Object.keys(n).forEach(function (m) { h[m] = (h[m] || 0) + n[m]; });
+    });
+    return h;
+  }
+
+  /**
+   * 在你「唱到过的最低~最高」之间，找出从来没被稳定唱到过的音（音域里的洞）。
+   * 只把「不贴着上下两端、且跨度 2~7 个半音」的洞算作换声区候选。
+   */
+  function rangeHoles(log) {
+    var hist = noteHistogram(log);
+    var ms = Object.keys(hist).map(Number).filter(function (m) { return isFinite(m); });
+    if (ms.length < 2) return { ok: false, low: null, high: null, holes: [], runs: [], hist: hist };
+    var lo = Math.min.apply(null, ms), hi = Math.max.apply(null, ms);
+    var holes = [], m;
+    for (m = lo; m <= hi; m++) { if (!hist[m]) holes.push(m); }
+    var runs = [], cur = null;
+    holes.forEach(function (x) {
+      if (cur && x === cur.hi + 1) cur.hi = x;
+      else { cur = { lo: x, hi: x }; runs.push(cur); }
+    });
+    var inner = runs.filter(function (r) {
+      var len = r.hi - r.lo + 1;
+      /* 换声区总在音域的上半部分，所以只认「在上半段、不贴两端、宽 2~7 个半音」的洞 */
+      return r.lo > lo + 1 && r.hi < hi - 1 && len >= 2 && len <= 7 && r.lo >= lo + (hi - lo) * 0.45;
+    });
+    inner.sort(function (a, b) { return (b.hi - b.lo) - (a.hi - a.lo); });
+    return { ok: true, low: lo, high: hi, holes: holes, runs: inner, allRuns: runs, hist: hist };
+  }
+
+  /**
+   * 纯函数：从一次「半音阶上行扫描」的结果里推测换声点。
+   * notes: [{ midi, frames, steadyFrames, steadyRatio, centsSd, rmsMed, volRatio }]，midi 升序
+   * 判断线索（任意两条同时出现才算，避免偶发抖动误判）：
+   *   pitch    抖动突然明显变大（往上硬顶）
+   *   unsteady 唱住的比例骤降
+   *   push     音量突然要加大（>1.8 倍）
+   *   drop     音量突然掉一半（换到假声 / 漏气）
+   */
+  function analyzePassaggio(notes) {
+    var all = (notes || []).filter(function (n) { return n && isFinite(n.midi); })
+      .slice().sort(function (a, b) { return a.midi - b.midi; });
+    if (!all.length) return { ok: false, breakMidi: null, zone: null, reason: '还没有扫描数据。', list: [] };
+    var list = all.filter(function (n) { return n.frames >= 5; });
+    var thin = all.filter(function (n) { return n.frames > 0 && n.frames < 5; });
+    if (list.length < 4) {
+      return { ok: false, breakMidi: null, zone: null, list: list,
+               reason: '有效数据太少：一次至少要有 4 个音各唱住 5 帧以上（每个音大约 2.2 秒）。' };
+    }
+    /* 连续的「几乎唱不出来」段，且在全段最上面 -> 那是天花板，不是换声点 */
+    var top = list[list.length - 1];
+    var above = thin.filter(function (n) { return n.midi > top.midi; });
+    if (above.length >= 2) {
+      return { ok: false, breakMidi: null, zone: null, list: list, ceilingMidi: above[0].midi,
+               reason: '从 ' + PT.midiToName(above[0].midi) + ' 往上基本唱不出来了（' + above.length +
+                       ' 个音都没唱住），这更像是当前的高音上限，不是换声点。等能稳定唱到 ' +
+                       PT.midiToName(top.midi) + ' 之后再扫一次。' };
+    }
+
+    var baseN = Math.max(2, Math.ceil(list.length / 3));
+    var baseList = list.slice(0, baseN);   // 基线只用最下面那 1/3 的音：它们一定还在胸声里
+    var baseSd = Math.max(25, median(baseList.map(function (n) { return n.centsSd; })));
+    var baseSteady = Math.max(0.5, median(baseList.map(function (n) { return n.steadyRatio; })));
+    var baseRms = median(baseList.map(function (n) { return n.rmsMed; }).filter(function (v) { return v > 1e-5; }));
+
+    list.forEach(function (n, i) {
+      var prev = list[i - 1];
+      n.volRatio = (prev && prev.rmsMed > 1e-5) ? n.rmsMed / prev.rmsMed : 1;
+      n.flags = [];
+      if (n.centsSd > Math.max(35, baseSd * 2.2)) n.flags.push('pitch');
+      if (n.steadyRatio < baseSteady * 0.5) n.flags.push('unsteady');
+      if (i > 0 && n.volRatio > 1.8) n.flags.push('push');
+      if (i > 0 && n.volRatio < 0.55) n.flags.push('drop');
+    });
+
+    var idx = -1, i;
+    for (i = 1; i < list.length; i++) {
+      if (list[i].flags.length && (i + 1 >= list.length || list[i + 1].flags.length)) { idx = i; break; }
+    }
+    if (idx < 0) {
+      for (i = 1; i < list.length; i++) { if (list[i].flags.length) { idx = i; break; } }
+    }
+    if (idx < 0) {
+      return { ok: false, breakMidi: null, zone: null, list: list, baseSd: baseSd, baseSteady: baseSteady,
+               reason: '这一段唱得很平顺：' + PT.midiToName(list[0].midi) + ' 到 ' +
+                       PT.midiToName(list[list.length - 1].midi) + ' 都没出现明显的换声痕迹。' +
+                       '可以把起始音调低 2~3 个半音，或者再往上多扫几个音试试。' };
+    }
+    var bm = list[idx].midi;
+    var zone = { lo: bm, hi: Math.min(list[list.length - 1].midi, bm + 2) };
+    return { ok: true, breakMidi: bm, zone: zone, list: list, baseSd: baseSd, baseSteady: baseSteady,
+             baseRms: baseRms, at: idx, reason: passReasonText(list[idx]) };
+  }
+
+  var PASS_FLAG_TEXT = {
+    pitch: '音高开始飘', unsteady: '唱住的比例掉下来了',
+    push: '音量突然要加大', drop: '音量突然掉下来'
+  };
+  function passReasonText(n) {
+    var why = (n.flags || []).map(function (f) {
+      if (f === 'pitch') return '音高抖动 ' + Math.round(n.centsSd) + ' 音分，明显比下面的音大';
+      if (f === 'unsteady') return '只有 ' + Math.round(n.steadyRatio * 100) + '% 的时间在 ±50 音分内';
+      if (f === 'push') return '音量突然要加大到上一个音的 ' + n.volRatio.toFixed(1) + ' 倍（往上硬顶的典型信号）';
+      if (f === 'drop') return '音量突然掉到上一个音的 ' + n.volRatio.toFixed(1) + '（换到假声 / 漏气的典型信号）';
+      return f;
+    });
+    return '在 ' + PT.midiToName(n.midi) + ' 附近检测到换声痕迹：' + why.join('；') + '。';
+  }
+
+  /** 当前生效的换声点：手动 > 最近一次扫描 > 音域空洞推测 */
+  function currentPassaggio() {
+    var log = loadPassLog();
+    if (log.manual !== null && log.manual !== undefined) {
+      return { midi: log.manual, zone: { lo: log.manual, hi: log.manual + 2 }, source: 'manual',
+               reason: '你在下面手动指定的换声点。' };
+    }
+    var scans = log.scans || [];
+    for (var i = scans.length - 1; i >= 0; i--) {
+      var s = scans[i];
+      if (s && s.breakMidi !== null && s.breakMidi !== undefined) {
+        return { midi: s.breakMidi, zone: s.zone || { lo: s.breakMidi, hi: s.breakMidi + 2 }, source: 'scan',
+                 at: s.at, reason: s.reason || '' };
+      }
+    }
+    var holes = rangeHoles(loadRangeLog());
+    if (holes.runs && holes.runs.length) {
+      var run = holes.runs[0];
+      return { midi: run.lo, zone: { lo: run.lo, hi: run.hi }, source: 'hole',
+               reason: '音域记录里 ' + PT.midiToName(run.lo) + '–' + PT.midiToName(run.hi) +
+                       ' 从来没被稳定唱到过，像是音域中间的一段空洞（只是推测）。' };
+    }
+    return { midi: null, zone: null, source: null, reason: '' };
+  }
+  function passSourceName(src) {
+    return src === 'manual' ? '手动指定' : (src === 'scan' ? '扫描得出' : '音域空洞推测');
+  }
+  /** 和三个男声换声区的常见位置比一比 */
+  function passCompare(midi) {
+    var bands = refBands(), hits = [], near = null;
+    bands.forEach(function (b) {
+      b._d = midi < b.loMidi ? (b.loMidi - midi) : (midi > b.hiMidi ? (midi - b.hiMidi) : 0);
+      if (b._d === 0) hits.push(b);
+      if (!near || b._d < near._d) near = b;
+    });
+    var parts = [];
+    if (hits.length > 1) {
+      /* 边界音（比如 C4）同时属于两个声部的换声区，两个都报出来 */
+      parts.push('正好在' + hits.map(function (b) {
+        return b.name + '换声区（' + b.lo + '–' + b.hi + '）';
+      }).join('和') + '的交界处（' + PT.midiToName(midi) + '）');
+    } else if (hits.length === 1) {
+      parts.push('正好落在' + hits[0].name + '换声区（' + hits[0].lo + '–' + hits[0].hi + '）里');
+    } else {
+      parts.push('最接近' + near.name + '换声区（' + near.lo + '–' + near.hi + '）');
+    }
+    var t = bands[2];
+    if (midi < t.loMidi) parts.push('离男高音换声区下限 ' + t.lo + ' 还差 ' + (t.loMidi - midi) + ' 个半音');
+    else if (midi > t.hiMidi) parts.push('比男高音换声区上限 ' + t.hi + ' 还高 ' + (midi - t.hiMidi) + ' 个半音');
+    else parts.push('已经在男高音换声区（' + t.lo + '–' + t.hi + '）里面了');
+    return parts.join('；');
+  }
+
+  /* ---------- 扫描流程 ---------- */
+
+  function defaultScanStart() {
+    return clamp((S.rangeHigh || 69) - (SCAN_STEPS - 1), 40, 79);
+  }
+  function buildPassStartSelect() {
+    var sel = $('passStartSel');
+    if (!sel) return;
+    var keep = parseInt(sel.value, 10);
+    sel.innerHTML = '';
+    for (var m = 40; m <= 79; m++) {
+      var n = PT.describeMidi(m, S.a4, S.useFlat);
+      var op = document.createElement('option');
+      op.value = String(m);
+      op.textContent = n.letterName + ' · ' + n.solfege + n.octave + ' · ' + num(n.freq, 1) + ' Hz';
+      sel.appendChild(op);
+    }
+    sel.value = String(isFinite(keep) ? keep : defaultScanStart());
+  }
+  function buildPassManualSelect() {
+    var sel = $('passManualSel');
+    if (!sel) return;
+    var log = loadPassLog();
+    var keep = (log.manual === null || log.manual === undefined) ? '' : String(log.manual);
+    sel.innerHTML = '';
+    var opA = document.createElement('option');
+    opA.value = '';
+    opA.textContent = '自动（用扫描结果 / 音域空洞推测）';
+    sel.appendChild(opA);
+    for (var m = 40; m <= 84; m++) {
+      var n = PT.describeMidi(m, S.a4, S.useFlat);
+      var op = document.createElement('option');
+      op.value = String(m);
+      op.textContent = n.letterName + ' · ' + n.solfege + n.octave;
+      sel.appendChild(op);
+    }
+    sel.value = keep;
+  }
+  function onPassManual(v) {
+    var log = loadPassLog();
+    log.manual = (v === '' || v === null || v === undefined) ? null : parseInt(v, 10);
+    if (log.manual !== null && !isFinite(log.manual)) log.manual = null;
+    log.updatedAt = new Date().toISOString();
+    savePassLog(log);
+    renderPassaggio();
+    setStatus(log.manual === null
+      ? '换声点改回「自动」—— 会用最近一次扫描的结果，没有扫描就用音域空洞推测。'
+      : '已把换声点手动设为 <b>' + PT.midiToName(log.manual) + '</b>（趋势图上的橙色虚线会跟着走）。');
+  }
+
+  function startPassScan() {
+    if (S.scan && S.scan.active) { abortPassScan(); setStatus('已手动结束换声区扫描。'); return; }
+    if (!S.running) { setStatus('先点①里的「开始收音」并允许麦克风，再回来点「🎙 开始换声区扫描」。'); return; }
+    var sel = $('passStartSel');
+    var start = parseInt(sel && sel.value, 10);
+    if (!isFinite(start)) start = defaultScanStart();
+    var notes = [];
+    for (var i = 0; i < SCAN_STEPS; i++) {
+      notes.push({ midi: start + i, frames: 0, steadyFrames: 0, cents: [], rms: [],
+                   centsSd: 0, centsAbs: 0, avgCents: 0, rmsMed: 0, steadyRatio: 0, coverRatio: 0, flags: [] });
+    }
+    S.scan = { active: true, notes: notes, idx: 0, t0: 0, phase: 'listen', played: -1, lastUi: 0 };
+    var b = $('passScanBtn');
+    if (b) { b.textContent = '⏹ 结束扫描'; b.classList.add('on'); }
+    var total = Math.round(SCAN_STEPS * (SCAN_LISTEN_MS + SCAN_SING_MS) / 1000);
+    setStatus('🎙 换声区扫描开始：<b>' + PT.midiToName(start) + ' → ' + PT.midiToName(start + SCAN_STEPS - 1) +
+              '</b>，约 ' + total + ' 秒。每个音先听 1.2 秒参考音、再跟着唱 2.2 秒。' +
+              '<b>请戴耳机</b>，唱的时候音量保持和平时一样 —— 不要为了唱上去刻意加大，那正是要检测的东西。');
+    renderScanProgress();
+  }
+
+  /** 中途放弃（不保存） */
+  function abortPassScan() {
+    if (S.scan) S.scan.active = false;
+    var b = $('passScanBtn');
+    if (b) { b.textContent = '🎙 开始换声区扫描'; b.classList.remove('on'); }
+  }
+
+  /** 由主分析循环按帧驱动：analyze() -> scanFeed() */
+  function scanFeed(ts, cur) {
+    var sc = S.scan;
+    if (!sc || !sc.active) return;
+    if (!sc.t0) sc.t0 = ts;
+    var noteMs = SCAN_LISTEN_MS + SCAN_SING_MS;
+    var el = ts - sc.t0;
+    var idx = Math.floor(el / noteMs);
+    if (idx >= sc.notes.length) { finishPassScan(); return; }
+    if (idx < 0) idx = 0;
+    var n = sc.notes[idx];
+    var inNote = el - idx * noteMs;
+    sc.idx = idx;
+    if (sc.played !== idx) {
+      sc.played = idx;
+      sc.phase = 'listen';
+      playTone(PT.midiToFreq(n.midi, S.a4), SCAN_LISTEN_MS / 1000 - 0.15, 0.22);
+    }
+    if (inNote < SCAN_LISTEN_MS) { sc.phase = 'listen'; return; }
+    sc.phase = 'sing';
+    if (cur) {
+      var cents = (cur.midi - n.midi) * 100;
+      n.cents.push(cents);
+      n.rms.push(cur.rms);
+      n.frames++;
+      if (Math.abs(cents) <= 50 && cur.conf >= 0.6) n.steadyFrames++;
+    }
+    if (ts - sc.lastUi > 250) { sc.lastUi = ts; renderScanProgress(); }
+  }
+
+  function renderScanProgress() {
+    var sc = S.scan, el = $('passResult');
+    if (!sc || !el) return;
+    var n = sc.notes[sc.idx];
+    if (!n) return;
+    el.innerHTML = '🎙 正在扫描：第 <b>' + (sc.idx + 1) + ' / ' + sc.notes.length + '</b> 个音 <b>' +
+      PT.midiToName(n.midi) + '</b>（' + num(PT.midiToFreq(n.midi, S.a4), 1) + ' Hz）—— ' +
+      (sc.phase === 'listen' ? '<b>先听参考音</b>，这几秒别出声' : '<b>跟着唱</b>，音量保持和平时一样');
+  }
+
+  function finishPassScan() {
+    var sc = S.scan;
+    if (!sc) return;
+    var expect = Math.max(6, Math.round(SCAN_SING_MS / (S.analysisInterval || 60)));
+    sc.notes.forEach(function (n) {
+      n.frames = n.cents.length;
+      n.expectFrames = expect;
+      n.centsSd = std(n.cents);
+      n.avgCents = mean(n.cents);
+      n.centsAbs = mean(n.cents.map(function (c) { return Math.abs(c); }));
+      n.rmsMed = median(n.rms);
+      n.steadyRatio = Math.min(1, n.steadyFrames / expect);
+      n.coverRatio = Math.min(1, n.frames / expect);
+      delete n.cents; delete n.rms;
+    });
+    var res = analyzePassaggio(sc.notes);
+    var log = loadPassLog();
+    log.scans = (log.scans || []).concat([{
+      at: new Date().toISOString(), a4: S.a4,
+      startMidi: sc.notes[0].midi, endMidi: sc.notes[sc.notes.length - 1].midi,
+      breakMidi: res.breakMidi, zone: res.zone, reason: res.reason, notes: sc.notes
+    }]);
+    log.scans = log.scans.slice(-20);
+    log.updatedAt = new Date().toISOString();
+    savePassLog(log);
+    S.lastScanResult = res;
+    abortPassScan();
+    renderPassaggio();
+    setStatus('✅ 换声区扫描完成。' + (res.ok
+      ? ('检测到换声点候选 <b>' + PT.midiToName(res.breakMidi) + '</b>（' + passCompare(res.breakMidi) + '）。')
+      : ('没有检测到明显的换声点 —— ' + res.reason)));
+  }
+
+  /* ---------- 渲染 ---------- */
+
+  function updatePassStatus() {
+    var st = $('passStatus');
+    if (!st) return;
+    var log = loadPassLog();
+    var series = trendSeries(loadRangeLog());
+    var msg = '每日音域记录 <b>' + series.length + '</b> 天 · 换声区扫描 <b>' + ((log.scans || []).length) + '</b> 次';
+    msg += series.length < 2
+      ? '。趋势图至少要有 <b>2 天</b>记录才看得出来 —— 每天开着麦克风唱 1 分钟就够。'
+      : '。';
+    st.innerHTML = msg;
+  }
+
+  function passResultHtml() {
+    var pass = currentPassaggio();
+    if (pass.midi === null) {
+      return '还没有换声点。三个办法：<br>' +
+        '① <b>最准</b>：点「🎙 开始换声区扫描」，从你唱得最舒服的中声区开始，逐半音往上扫一个八度；<br>' +
+        '② 多唱几天，让每日音域记录里的「空洞」自己暴露出来；<br>' +
+        '③ 已经知道自己换声点的话，直接在下面「我的换声点」里手动指定。';
+    }
+    var n = PT.describeMidi(pass.midi, S.a4, S.useFlat);
+    var zone = pass.zone ? (PT.midiToName(pass.zone.lo) + '–' + PT.midiToName(pass.zone.hi)) : PT.midiToName(pass.midi);
+    return '🎯 换声点候选：<b>' + n.letterName + '</b>（' + n.solfege + n.octave + ' · ' + num(n.freq, 1) + ' Hz）' +
+      ' · 换声区 <b>' + zone + '</b> · 来源：' + passSourceName(pass.source) +
+      '<br>对照：' + passCompare(pass.midi) +
+      (pass.reason ? '<br>' + pass.reason : '') +
+      '<br><span class="muted small">换声点是「唱到这里发声方式要换挡」的位置，不是缺陷；' +
+      '找到它才好针对性地练混声，而不是硬顶。</span>';
+  }
+
+  function renderPassTable() {
+    var body = $('passBody');
+    if (!body) return;
+    var log = loadPassLog();
+    var scans = log.scans || [];
+    var last = scans.length ? scans[scans.length - 1] : null;
+    var list = (last && last.notes) ? last.notes.filter(function (n) { return n.frames > 0; }) : [];
+    if (!list.length) {
+      body.innerHTML = '<tr><td colspan="6" class="muted center">还没有扫描记录 —— 点「🎙 开始换声区扫描」做第一次</td></tr>';
+      return;
+    }
+    var breakMidi = (S.lastScanResult && S.lastScanResult.ok) ? S.lastScanResult.breakMidi : last.breakMidi;
+    body.innerHTML = list.map(function (n) {
+      var info = PT.describeMidi(n.midi, S.a4, S.useFlat);
+      var tags = (n.flags || []).map(function (f) {
+        var cls = (f === 'pitch' || f === 'unsteady') ? 'bad' : 'warn';
+        return '<span class="pass-tag ' + cls + '">' + (PASS_FLAG_TEXT[f] || f) + '</span>';
+      }).join('');
+      if (!tags) tags = '<span class="pass-tag ok">平顺</span>';
+      return '<tr' + (n.midi === breakMidi ? ' class="pass-break"' : '') + '>' +
+        '<td>' + info.letterName + ' <span class="muted small">' + info.solfege + info.octave + '</span></td>' +
+        '<td>' + Math.round((n.coverRatio || 0) * 100) + '%</td>' +
+        '<td>' + Math.round((n.steadyRatio || 0) * 100) + '%</td>' +
+        '<td>' + Math.round(n.centsSd || 0) + ' 音分</td>' +
+        '<td>' + num((n.rmsMed || 0) * 100, 1) + '</td>' +
+        '<td>' + tags + '</td>' +
+        '</tr>';
+    }).join('');
+  }
+
+  function renderPassaggio() {
+    updatePassStatus();
+    buildPassManualSelect();
+    var out = $('passResult');
+    if (out) out.innerHTML = passResultHtml();
+    renderPassTable();
+    drawTrend();
+  }
+
+  /** 音域趋势图：横轴=日期，纵轴=音高，竖线=当天最低~最高音 */
+  function drawTrend() {
+    var cv = $('trendChart');
+    if (!cv) return;
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth || 640, h = cv.clientHeight || 300;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    var ctx = cv.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var padL = 54, padR = 66, padT = 14, padB = 26;
+    var plotW = Math.max(40, w - padL - padR), plotH = Math.max(40, h - padT - padB);
+
+    var rlog = loadRangeLog();
+    var series = trendSeries(rlog);
+    var holes = rangeHoles(rlog);
+    var pass = currentPassaggio();
+
+    /* 纵轴范围：音域设置 + 记录 + 换声点，都装进去 */
+    var lo = (S.rangeLow || 45) - 2, hi = (S.rangeHigh || 69) + 2;
+    series.forEach(function (d) { lo = Math.min(lo, d.low - 1); hi = Math.max(hi, d.high + 1); });
+    if (pass.zone) { lo = Math.min(lo, pass.zone.lo - 1); hi = Math.max(hi, pass.zone.hi + 1); }
+    lo = Math.floor(lo); hi = Math.ceil(hi);
+    if (hi - lo < 14) hi = lo + 14;
+
+    function Y(m) { return padT + (hi - m) / (hi - lo) * plotH; }
+    function X(i) { return series.length <= 1 ? padL + plotW / 2 : padL + i / (series.length - 1) * plotW; }
+
+    /* 背景：三个男声换声区的常见位置 */
+    refBands().forEach(function (b) {
+      var y0 = Y(b.hiMidi + 0.5), y1 = Y(b.loMidi - 0.5);
+      ctx.fillStyle = b.id === 'tenor' ? 'rgba(167,139,250,.12)' : 'rgba(96,165,250,.07)';
+      ctx.fillRect(padL, y0, plotW, Math.max(1, y1 - y0));
+      ctx.fillStyle = 'rgba(147,161,192,.75)';
+      ctx.font = '10px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(b.name + '换声区 ' + b.lo + '–' + b.hi, padL + 4, y0 + 11);
+    });
+
+    /* 每八度的 C 画一条横线当刻度 */
+    ctx.font = '10px system-ui, sans-serif';
+    for (var m = lo; m <= hi; m++) {
+      if (((m % 12) + 12) % 12 !== 0) continue;
+      ctx.strokeStyle = 'rgba(43,55,87,.85)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(padL, Y(m));
+      ctx.lineTo(padL + plotW, Y(m));
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(147,161,192,.9)';
+      ctx.textAlign = 'right';
+      ctx.fillText(PT.midiToName(m), padL - 6, Y(m) + 3);
+    }
+
+    /* 右侧：从来没稳定唱到过的音 */
+    if (holes.ok && holes.holes.length) {
+      holes.holes.forEach(function (mm) {
+        ctx.fillStyle = 'rgba(248,113,113,.5)';
+        ctx.fillRect(padL + plotW + 3, Y(mm + 0.5), 9, Math.max(1.5, Y(mm - 0.5) - Y(mm + 0.5)));
+      });
+      ctx.fillStyle = 'rgba(248,113,113,.85)';
+      ctx.textAlign = 'left';
+      ctx.fillText('没唱到过', padL + plotW + 15, padT + 10);
+    }
+
+    if (!series.length) {
+      ctx.fillStyle = 'rgba(147,161,192,.95)';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('还没有每日音域记录 —— 先去上面②开着麦克风唱几个音（最低、最高各唱 1 秒）', padL + plotW / 2, padT + plotH / 2);
+      return;
+    }
+
+    var barW = Math.max(2, Math.min(9, plotW / Math.max(6, series.length) * 0.6));
+    series.forEach(function (d, i) {
+      var x = X(i);
+      ctx.strokeStyle = 'rgba(96,165,250,.38)';
+      ctx.lineWidth = barW;
+      ctx.beginPath();
+      ctx.moveTo(x, Y(d.high));
+      ctx.lineTo(x, Y(d.low));
+      ctx.stroke();
+      ctx.fillStyle = '#a78bfa';
+      ctx.beginPath(); ctx.arc(x, Y(d.high), 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#60a5fa';
+      ctx.beginPath(); ctx.arc(x, Y(d.low), 3, 0, Math.PI * 2); ctx.fill();
+    });
+    if (series.length > 1) {
+      [[ 'high', 'rgba(167,139,250,.5)' ], [ 'low', 'rgba(96,165,250,.5)' ]].forEach(function (pair) {
+        ctx.strokeStyle = pair[1];
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        series.forEach(function (d, i) {
+          var x = X(i), y = Y(d[pair[0]]);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+      });
+    }
+
+    /* 换声点：橙色带 + 虚线 */
+    if (pass.zone) {
+      var zy0 = Y(pass.zone.hi + 0.5), zy1 = Y(pass.zone.lo - 0.5);
+      ctx.fillStyle = 'rgba(251,191,36,.16)';
+      ctx.fillRect(padL, zy0, plotW, Math.max(2, zy1 - zy0));
+      ctx.strokeStyle = '#fbbf24';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, Y(pass.midi));
+      ctx.lineTo(padL + plotW, Y(pass.midi));
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#fbbf24';
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText('换声点 ' + PT.midiToName(pass.midi) + '（' + passSourceName(pass.source) + '）',
+        padL + plotW - 4, Y(pass.midi) - 5);
+    }
+
+    /* 横轴日期：只标首 / 中 / 末 */
+    ctx.fillStyle = 'rgba(147,161,192,.9)';
+    ctx.font = '10px system-ui, sans-serif';
+    var marks = series.length <= 3 ? series.map(function (d, i) { return i; }) : [0, Math.floor((series.length - 1) / 2), series.length - 1];
+    marks.forEach(function (i) {
+      var d = series[i];
+      ctx.textAlign = i === 0 ? 'left' : (i === series.length - 1 ? 'right' : 'center');
+      ctx.fillText(d.date.slice(5), X(i), padT + plotH + 15);
+    });
+  }
+
+  /* ---------- 导出 / 保存 ---------- */
+  function passaggioJSON() {
+    var log = loadPassLog(), rlog = loadRangeLog();
+    var pass = currentPassaggio(), holes = rangeHoles(rlog);
+    return JSON.stringify({
+      app: 'vocal-pitch-monitor-passaggio', version: 1,
+      exportedAt: new Date().toISOString(), a4: S.a4,
+      note: '换声点是从「半音阶上行扫描」推测的：音高抖动突然变大 / 唱住比例骤降 / 音量突然要加大或掉一半。' +
+            '这只是练习线索，不是医学或声乐诊断。neverSungNotes 是每日音域记录里从没稳定唱到过的音。',
+      passaggio: pass.midi === null ? null : {
+        note: PT.midiToName(pass.midi), midi: pass.midi, source: pass.source,
+        zoneLow: pass.zone ? PT.midiToName(pass.zone.lo) : null,
+        zoneHigh: pass.zone ? PT.midiToName(pass.zone.hi) : null,
+        reference: passCompare(pass.midi)
+      },
+      rangeTrend: trendSeries(rlog).map(function (d) {
+        return { date: d.date, low: PT.midiToName(d.low), high: PT.midiToName(d.high), semitones: d.semis };
+      }),
+      neverSungNotes: holes.ok ? holes.holes.map(function (mm) { return PT.midiToName(mm); }) : [],
+      scans: (log.scans || []).map(function (s) {
+        return {
+          at: s.at, startNote: PT.midiToName(s.startMidi), endNote: PT.midiToName(s.endMidi),
+          breakMidi: s.breakMidi, breakNote: s.breakMidi === null || s.breakMidi === undefined ? null : PT.midiToName(s.breakMidi),
+          zoneLow: s.zone ? PT.midiToName(s.zone.lo) : null, zoneHigh: s.zone ? PT.midiToName(s.zone.hi) : null,
+          reason: s.reason,
+          notes: (s.notes || []).map(function (n) {
+            return { note: PT.midiToName(n.midi), midi: n.midi, frames: n.frames,
+                     coverPercent: Math.round((n.coverRatio || 0) * 100),
+                     steadyPercent: Math.round((n.steadyRatio || 0) * 100),
+                     sdCents: +num(n.centsSd || 0, 1), avgCents: +num(n.avgCents || 0, 1),
+                     rmsMed: +num(n.rmsMed || 0, 4), flags: n.flags || [] };
+          })
+        };
+      })
+    }, null, 1);
+  }
+  function trendCSV() {
+    var rows = ['date,low_note,high_note,semitones,octaves'];
+    trendSeries(loadRangeLog()).forEach(function (d) {
+      rows.push([d.date, PT.midiToName(d.low), PT.midiToName(d.high), d.semis, (d.semis / 12).toFixed(2)].join(','));
+    });
+    return '\ufeff' + rows.join('\n');
+  }
+  function scanCSV() {
+    var rows = ['note,midi,cover_percent,steady_percent,sd_cents,avg_cents,rms_med,flags'];
+    var scans = loadPassLog().scans || [];
+    var last = scans.length ? scans[scans.length - 1] : null;
+    if (last) {
+      (last.notes || []).forEach(function (n) {
+        rows.push([PT.midiToName(n.midi), n.midi, Math.round((n.coverRatio || 0) * 100),
+                   Math.round((n.steadyRatio || 0) * 100), num(n.centsSd || 0, 1), num(n.avgCents || 0, 1),
+                   num(n.rmsMed || 0, 4), (n.flags || []).join('|')].join(','));
+      });
+    }
+    return '\ufeff' + rows.join('\n');
+  }
+  function passFiles() {
+    var base = 'passaggio-' + rangeStamp();
+    return [
+      { name: base + '.json', data: passaggioJSON() },
+      { name: base + '-trend.csv', data: trendCSV() },
+      { name: base + '-scan.csv', data: scanCSV() }
+    ];
+  }
+  function downloadPassFiles() {
+    var base = 'passaggio-' + rangeStamp();
+    var files = [
+      [base + '.json', passaggioJSON(), 'application/json'],
+      [base + '-trend.csv', trendCSV(), 'text/csv'],
+      [base + '-scan.csv', scanCSV(), 'text/csv']
+    ];
+    files.forEach(function (f) {
+      var blob = new Blob([f[1]], { type: f[2] + ';charset=utf-8' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = f[0];
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+    });
+    setStatus('已下载：' + base + '.json / -trend.csv / -scan.csv');
+  }
+  function savePassToFolder() {
+    var RF = window.RecordFolder;
+    if (!hasPassData()) {
+      if (!RF || !RF.supported()) { setStatus('还没有音域趋势或换声区扫描数据可以保存。'); return; }
+      renderRangeFolder();
+      setStatus('还没有音域趋势或换声区扫描数据 —— 先唱几个音，或做一次换声区扫描。');
+      return;
+    }
+    if (!RF || !RF.supported()) { downloadPassFiles(); return; }
+    var doWrite = function () {
+      return RF.writeFiles(passFiles()).then(function () {
+        renderRangeFolder();
+        setStatus('✅ 已存到记录文件夹：passaggio-*.json / -trend.csv / -scan.csv');
+      });
+    };
+    if (!RF.get()) {
+      RF.pick().then(doWrite).catch(function (e) {
+        if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
+      });
+      return;
+    }
+    doWrite().catch(function (e) {
+      if (e && (e.code === 'NO_PERM' || e.code === 'NO_FOLDER')) {
+        return RF.pick().then(doWrite).catch(function (e2) {
+          if (e2 && e2.name !== 'AbortError') setStatus('保存失败：' + (e2.message || e2));
+        });
+      }
+      if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
     });
   }
 
