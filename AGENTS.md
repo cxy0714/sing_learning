@@ -151,7 +151,7 @@ python -m venv "$env:USERPROFILE\.demucs-env"
 
 - 用 File System Access API 让用户只授权一次文件夹，句柄存在 IndexedDB `vpm-kara-rec` 的 `kv` store，key `recDir`。
 - 与 `record.js` 共用同一个 IndexedDB 和 key，所以在任一页面选择后，另一个页面也能直接使用。
-- 对外暴露 `window.RecordFolder`，提供 `load`、`pick`、`get`、`name`、`hasPermission`、`writeFile`、`writeFiles`、`onChange`。
+- 对外暴露 `window.RecordFolder`，提供 `load`、`pick`、`get`、`name`、`hasPermission`、`writeFile`、`writeFiles`、`onChange`、`supportText`（一句话说明当前浏览器能不能直接写文件夹）。
 - 音准页的「保存音域记录」和 K 歌页的「自动保存/手动保存」都会写到这个文件夹。
 - 不支持 File System Access API 时，`supported()` 返回 false，页面降级为下载 / 浏览器内存储。
 
@@ -204,7 +204,7 @@ python -m venv "$env:USERPROFILE\.demucs-env"
 3. **中文界面与中文注释**：现有 UI、报错、README 均为中文，保持一致。
 4. **不要破坏测试可访问性**：核心纯函数（音高、曲库解析、打分、统计）应保持可在 Node vm 中加载。
 5. **缓存版本号**：`index.html` / `karaoke.html` 的 JS/CSS 带 `?v=N`，**每个文件各自计数**，不是全局统一号
-   （例如现在 `style.css?v=9`、`js/app.js?v=9`、`js/karaoke.js?v=11`、`js/library.js?v=12`、`js/record.js?v=13`）。改完哪个静态资源就提升哪个文件的号，
+   （例如现在 `style.css?v=10`、`js/app.js?v=10`、`js/karaoke.js?v=11`、`js/library.js?v=12`、`js/record.js?v=14`、`js/record-folder.js?v=9`）。改完哪个静态资源就提升哪个文件的号，
    否则用户浏览器会缓存旧文件；新增站点 JS 要同时更新引用它的页面的 `<script>` 和 Pages workflow 的 `cp` 步骤。
 6. **Pages 打包名单**：`.github/workflows/pages.yml` 显式 `cp` 网站文件；新增前端资源时要同步更新该步骤。
 7. **`.ncm` 工具注意许可证**：算法/常量来自 MIT 的 `taurusxin/ncmdump`，不要移除 `tools/LICENSE-upstream-ncmdump.txt`。
@@ -308,3 +308,36 @@ Python 抛 `UnicodeEncodeError` 直接结束进程。中文歌名反而没事（
   用 `js/library.js` 的真实 `buildCatalog` 复核：7 首都是「完整版 + 人声版 + 伴奏版」齐全
   （`.vocals` 跨目录按歌名合并，`.no_vocals` 靠 artist|title 合并回主条目）。
   人声/伴奏实测 −15.4 ~ −27.6 dBFS、峰值 −0.2 ~ −6.9 dBFS，无静音、无削顶。
+
+## 11. 最近一次改动（线上"保存这一段到文件夹点了没反应"）
+
+背景：用户报 GitHub Pages 上唱完点「💾 保存这一段到文件夹」**什么都不发生**（也没弹选择框）。
+用 CDP 驱动本机 Edge 打开线上页面复现：记录存在时点这个按钮，`#songInfo` 一个字都没变，
+也没有 JS 异常。根因是**两条静默路径 + 反馈位置太远**：
+
+1. `record.js saveToFolder()` 里 `showDirectoryPicker` 的 promise 可能一直挂着（或同步抛），
+   而 `.catch` 只对非 `AbortError` 给消息 —— `AbortError`（含"没手势 / 选择框没弹出来"）被整个吞掉；
+   `RecordFolder.pick()` 之前还是同步抛，异常从 promise 回调里逃出去，`.catch` 拿不到。
+2. 只有 `onStatus → #songInfo` 这一条反馈，它在页面顶部「① 曲库」下面；用户点的是下面「③ 成绩单 / 练习记录」，
+   实测状态条在视口外（`songInfoTop = -797`），表现就是"点了没反应"。
+
+- `js/record-folder.js`：`pick()` 把 `showDirectoryPicker` 的**同步抛**包成 rejected promise（返回非 Promise 也报错）；
+  新增 `supportText()`（一句话说明当前浏览器能不能直接写文件夹，页面据此提示改下载）。
+- `js/record.js`：
+  - 新增 `note(msg, kind)`：写进按钮旁的 `#recStatus`（`info/ok/warn/err` 上色）并顺手 `scrollIntoView`，同时镜像到 `onStatus`。
+  - `saveToFolder()` 重写：先给"正在打开选择框"，**4 秒后若 `document.hasFocus()` 仍为真（说明选择框没弹出来）就自动兜底成下载**；
+    任何写盘失败/权限失败 → 直接下载 `karaoke-*.json` + `.webm` 并写清原因；`AbortError` 不再静默，提示"你取消了 / 可点下载"。
+  - 新增 `downloadRecordFiles(rec, why)`：不依赖 File System Access API 的兜底保存（下载 JSON + 录音）。
+  - `hasPermission(ask)`：保存流程只 `queryPermission`（ask=false），不再在异步链里 `requestPermission`
+    （它要用户手势，失败还会把用户手势消耗掉，导致后面的选择框也弹不出来）。
+  - 自动存盘 / 清理 / 回放等消息改走 `note()`；练习记录每条新增「📥 下载」；③ 新增「📥 下载这一段（JSON + 录音）」按钮。
+- `karaoke.html`：练习记录块新增 `#recSupport`（写盘能力说明）+ `#recStatus`（保存反馈）；③ 新增 `saveDownloadBtn`；
+  `record.js?v=14`、`record-folder.js?v=9`、`style.css?v=10`。
+- `index.html` + `js/app.js`：音域记录块新增 `#rangeStatus`，`setRangeStatus()` 统一反馈；保存 / 选文件夹失败同样兜底成
+  导出下载（`range-log-*.json/csv`）；`app.js?v=10`、`record-folder.js?v=9`、`style.css?v=10`。
+- `style.css`：新增 `.rec-status` 及 `.info/.ok/.warn/.err` 配色。
+- `test/selftest.js`：新增 `supportText()`、`pick()` 不同步抛 2 项；当前 **136 项全部通过**。
+- 验证方式（可复用）：`node serve.js` + Edge `--headless=new --remote-debugging-port=…`，
+  CDP `Page.navigate` → `Runtime.evaluate` 注入一条记录（`KaraokeRec.save`）→ `Input.dispatchMouseEvent` 点按钮
+  → 读 `#recStatus`。实测：无记录时提示"还没有练习记录"；有记录时选择框不弹出会先报"你取消了 / 没弹出来"，
+  「📥 下载」与"没有 showDirectoryPicker"两条路径都成功把 `karaoke-*.json` 落进下载目录。
