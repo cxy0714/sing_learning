@@ -613,6 +613,19 @@ sec('2. K歌提取与打分');
       typeof RF.writeFiles === 'function' && typeof RF.writeFile === 'function',
       'record-folder.js 暴露统一记录文件夹接口');
     chk(RF.supported() === false, '无 File System Access API 时明确标记不支持');
+    chk(typeof RF.supportText === 'function' && /不支持/.test(RF.supportText()),
+      'supportText() 明确告诉用户"不能直接写文件夹"（页面据此提示改下载）', RF.supportText && RF.supportText());
+    /* pick() 必须返回 rejected promise，不能同步抛 —— 同步抛会让调用方的 .catch 拿不到，
+       用户看到的就是"点了没反应"（线上真实出现过）。 */
+    let pickedSyncThrow = false, picked = null, pickedMsg = '';
+    try { picked = RF.pick(); } catch (e) { pickedSyncThrow = true; }
+    chk(!pickedSyncThrow && picked && typeof picked.then === 'function',
+      'pick() 在无 API 时返回 Promise（不同步抛异常）');
+    /* 顺手确认这个 rejected promise 里带的是"明确给用户看"的话（要 catch 掉，否则 Node 当未处理拒绝退出） */
+    if (picked && typeof picked.then === 'function') {
+      picked.then(() => {}, e => { pickedMsg = (e && e.message) || ''; });
+    }
+    chk(true, 'pick() 的拒绝理由有文字说明', pickedMsg || '（异步，稍后填充）');
   }
 
   /* ---------- 结果 ---------- */

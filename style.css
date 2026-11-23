@@ -259,3 +259,16 @@ tr.pass-break td { background: rgba(251,191,36,.14); }
 @media (max-width: 860px) {
   .trend-chart { height: 240px; }
 }
+
+/* ===== 保存类提示（写文件夹 / 下载兜底）===== */
+.rec-status {
+  margin: 8px 0 2px; padding: 8px 11px; border-radius: 9px; line-height: 1.6;
+  border: 1px solid var(--line); border-left: 3px solid var(--muted);
+  background: rgba(148, 163, 184, .08); font-size: 13px;
+}
+.rec-status[hidden] { display: none; }
+.rec-status.info { border-left-color: #60a5fa; }
+.rec-status.ok   { border-left-color: var(--ok); background: rgba(74, 222, 128, .10); }
+.rec-status.warn { border-left-color: var(--warn); background: rgba(251, 191, 36, .10); }
+.rec-status.err  { border-left-color: var(--bad); background: rgba(248, 113, 113, .10); }
+.rec-status code { word-break: break-all; }

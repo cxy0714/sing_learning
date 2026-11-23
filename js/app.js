@@ -209,6 +209,19 @@
 
   function setStatus(msg) { $('micStatus').textContent = msg; }
 
+  /* 音域记录 / 记录文件夹 的反馈显示在按钮旁边（#rangeStatus）——
+     写到顶部 #micStatus 太远，点完按钮会以为"没反应"。 */
+  function setRangeStatus(msg, kind) {
+    var el = $('rangeStatus');
+    if (el) {
+      el.hidden = false;
+      el.className = 'rec-status' + (kind ? ' ' + kind : '');
+      el.innerHTML = msg;
+      if (kind !== 'info' && el.scrollIntoView) { try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {} }
+    }
+    try { setStatus(String(msg).replace(/<[^>]+>/g, '')); } catch (e) {}
+  }
+
   /* ============================================================
    * 麦克风 & 分析循环
    * ============================================================ */
@@ -963,45 +976,69 @@
   function chooseRangeFolder() {
     var RF = window.RecordFolder;
     if (!RF || !RF.supported()) {
-      setStatus('这个浏览器不能直接写文件夹，请用 Chrome / Edge；也可以继续用「⬇ 导出 JSON / CSV」。');
+      setRangeStatus('这个浏览器不能直接写文件夹（Chrome / Edge 桌面版才支持），可以继续用「⬇ 导出 JSON / CSV」把记录下载下来。', 'warn');
       return;
     }
-    RF.pick().then(function (h) {
+    setRangeStatus('⏳ 正在打开「选择文件夹」窗口…', 'info');
+    var p;
+    try { p = RF.pick(); }
+    catch (e) {
+      setRangeStatus('打开文件夹选择框失败：' + ((e && e.name) || '错误') + ((e && e.message) ? '，' + e.message : '') +
+        '。可以先用「⬇ 导出 JSON / CSV」。', 'err');
+      return;
+    }
+    p.then(function (h) {
       renderRangeFolder();
-      setStatus('✅ 记录文件夹已设为 <b>' + h.name + '</b>：音域记录和 K 歌练习记录都会写到这里。');
+      setRangeStatus('✅ 记录文件夹已设为 <b>' + h.name + '</b>：音域记录和 K 歌练习记录都会写到这里。', 'ok');
     }).catch(function (e) {
-      if (e && e.name !== 'AbortError') setStatus('设置记录文件夹失败：' + (e.message || e));
+      if (e && e.name === 'AbortError') { setRangeStatus('你取消了选择文件夹（想存的时候再点一次就好）。', 'warn'); return; }
+      setRangeStatus('设置记录文件夹失败：' + ((e && e.name) || '错误') + ((e && e.message) ? '，' + e.message : '') +
+        '。可以先用「⬇ 导出 JSON / CSV」。', 'err');
     });
   }
   function saveRangeToFolder() {
     var log = loadRangeLog();
     var RF = window.RecordFolder;
     if (!RF || !RF.supported()) {
-      if (!Object.keys(log).length) { setStatus('还没有音域记录可保存，当前浏览器也不能直接写文件夹。'); return; }
+      if (!Object.keys(log).length) { setRangeStatus('还没有音域记录可保存，当前浏览器也不能直接写文件夹。', 'warn'); return; }
       downloadRangeFiles(log);
       return;
     }
     var doWrite = function () {
       if (!Object.keys(log).length) {
         renderRangeFolder();
-        setStatus('✅ 记录文件夹已设为 <b>' + RF.name() + '</b>；等有音域记录后再点「💾 保存音域记录」即可。');
+        setRangeStatus('✅ 记录文件夹已设为 <b>' + RF.name() + '</b>；等有音域记录后再点「💾 保存音域记录」即可。', 'ok');
         return Promise.resolve();
       }
       return writeRangeFiles(log);
     };
+    /* 任何一步失败（权限过期 / 选择框弹不出来 / 被浏览器策略挡）都兜底成"导出下载"，
+       保证点一次一定有东西落下，不会出现"点了没反应"。 */
+    var fallback = function (e) {
+      if (e && e.name === 'AbortError') { setRangeStatus('你取消了文件夹选择 —— 记录还在浏览器里，想直接下载就点「⬇ 导出 JSON / CSV」。', 'warn'); return; }
+      if (!Object.keys(log).length) {
+        setRangeStatus('保存失败：' + ((e && e.name) || '错误') + ((e && e.message) ? '，' + e.message : '') + '。', 'err');
+        return;
+      }
+      downloadRangeFiles(log);
+      setRangeStatus('写文件夹没成功（' + ((e && e.name) || '错误') + ((e && e.message) ? '，' + e.message : '') +
+        '），已改成导出下载：<code>range-log-*.json / .csv</code> 在「下载」文件夹里。', 'warn');
+    };
+    var pickSafe = function () {
+      try { return RF.pick(); } catch (e) { return Promise.reject(e); }
+    };
     if (!RF.get()) {
-      RF.pick().then(doWrite).catch(function (e) {
-        if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
-      });
+      setRangeStatus('⏳ 正在打开「选择文件夹」窗口…', 'info');
+      pickSafe().then(doWrite).catch(fallback);
       return;
     }
+    setRangeStatus('⏳ 正在写文件夹…', 'info');
     doWrite().catch(function (e) {
       if (e && (e.code === 'NO_PERM' || e.code === 'NO_FOLDER')) {
-        return RF.pick().then(doWrite).catch(function (e2) {
-          if (e2 && e2.name !== 'AbortError') setStatus('保存失败：' + (e2.message || e2));
-        });
+        setRangeStatus('需要重新授权一次记录文件夹（浏览器会弹选择框）…', 'info');
+        return pickSafe().then(doWrite).catch(fallback);
       }
-      if (e && e.name !== 'AbortError') setStatus('保存失败：' + (e.message || e));
+      fallback(e);
     });
   }
   function writeRangeFiles(log) {
@@ -1012,7 +1049,7 @@
       { name: base + '.csv', data: rangeCSV(log) }
     ]).then(function () {
       renderRangeFolder();
-      setStatus('✅ 已存到记录文件夹：' + base + '.json / ' + base + '.csv');
+      setRangeStatus('✅ 已存到记录文件夹：' + base + '.json / ' + base + '.csv', 'ok');
     });
   }
   function downloadRangeFiles(log) {
@@ -1026,7 +1063,7 @@
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
     });
-    setStatus('已下载：' + base + '.json / .csv');
+    setRangeStatus('📥 已下载：' + base + '.json / .csv（在「下载」文件夹里）', 'ok');
   }
 
   function renderRangeLog() {

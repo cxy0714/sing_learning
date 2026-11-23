@@ -78,7 +78,18 @@
     if (!global.showDirectoryPicker) {
       return Promise.reject(new Error('这个浏览器不支持直接写文件夹，请用 Chrome / Edge。'));
     }
-    return global.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' }).then(function (h) {
+    /* showDirectoryPicker 在"没有用户手势 / 被权限策略挡 / 不在顶层页面"时会【同步】抛异常，
+       直接往外抛会让调用方的 .catch 拿不到，表现成"点了没反应"。统一包成 rejected promise。 */
+    var p;
+    try {
+      p = global.showDirectoryPicker({ id: 'vpm-rec', mode: 'readwrite' });
+    } catch (e) {
+      return Promise.reject(e);
+    }
+    if (!p || typeof p.then !== 'function') {
+      return Promise.reject(new Error('文件夹选择框没有正常打开（浏览器把这个操作挡掉了）。'));
+    }
+    return p.then(function (h) {
       handle = h;
       return kvPut(KEY, h).catch(function () {}).then(function () {
         notify();
@@ -138,6 +149,24 @@
     });
   }
 
+  /** 给页面显示用的一句话：这个浏览器到底能不能直接写文件夹 */
+  function supportText() {
+    if (typeof global.showDirectoryPicker === 'function') {
+      return '这个浏览器支持直接写文件夹（Chrome / Edge 桌面版）。';
+    }
+    var ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) {
+      return '手机 / 平板浏览器不支持直接写文件夹 —— 保存会改成「下载」到下载目录。';
+    }
+    if (/Firefox/i.test(ua)) {
+      return 'Firefox 不支持直接写文件夹 —— 保存会改成「下载」；要直接写盘请用 Chrome / Edge 桌面版。';
+    }
+    if (/Safari/i.test(ua) && !/Chrome|Chromium|Edg\//i.test(ua)) {
+      return 'Safari 不支持直接写文件夹 —— 保存会改成「下载」；要直接写盘请用 Chrome / Edge 桌面版。';
+    }
+    return '这个浏览器不支持直接写文件夹 —— 保存会改成「下载」到下载目录。';
+  }
+
   function onChange(fn) {
     if (typeof fn !== 'function') return;
     listeners.push(fn);
@@ -146,6 +175,7 @@
 
   global.RecordFolder = {
     supported: supported,
+    supportText: supportText,
     load: load,
     pick: pick,
     get: get,
